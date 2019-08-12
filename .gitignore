@@ -1,2 +1,11 @@
 *.o
 *.d
+/Provisioning.pb-c.c
+/Provisioning.pb-c.h
+/SignalService.pb-c.c
+/SignalService.pb-c.h
+/WebSocketResources.pb-c.c
+/WebSocketResources.pb-c.h
+/test
+/protos
+/default.mk
