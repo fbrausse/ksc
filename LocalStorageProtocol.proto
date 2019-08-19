@@ -1,0 +1,12 @@
+/* copy from libsignal-protocol-java/protobuf/LocalStorageProtocol.proto
+ * in order to workaround different serialization API in
+ * libsignal-protocol-c
+ */
+
+package ksignal;
+
+message IdentityKeyPairStructure {
+    optional bytes publicKey  = 1;
+    optional bytes privateKey = 2;
+}
+

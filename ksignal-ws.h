@@ -27,6 +27,14 @@ struct signal_ws_handler {
 	void *udata;
 };
 
+struct signal_response {
+	uint32_t status;
+	char *message;
+	size_t n_headers;
+	char **headers;
+	fio_str_info_s body;
+};
+
 struct _signal_ws_send_request {
 	uint64_t *id;
 	size_t n_headers;
@@ -34,7 +42,7 @@ struct _signal_ws_send_request {
 	size_t size;
 	char *body;
 	/* 0: to unsubscribe, other to stay subscribed */
-	int (*on_response)(fio_str_info_s *msg, void *udata);
+	int (*on_response)(ws_s *ws, struct signal_response *response, void *udata);
 	void (*on_unsubscribe)(void *udata);
 	void *udata;
 };
@@ -51,7 +59,5 @@ int signal_ws_connect(const char *url, struct signal_ws_handler h);
 	signal_ws_connect((url), (struct signal_ws_handler){ __VA_ARGS__ })
 
 fio_tls_s * signal_tls(const char *cert_path);
-
-static inline void * memdup(void *p, size_t sz) { return memcpy(malloc(sz), p, sz); }
 
 #endif

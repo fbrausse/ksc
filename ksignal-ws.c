@@ -3,6 +3,7 @@
 #include "fio_tls.h"
 
 #include "ksignal-ws.h"
+#include "utils.h"
 #include "WebSocketResources.pb-c.h"
 
 #include <protobuf-c/protobuf-c.h>	/* ProtobufCMessage */
@@ -16,16 +17,22 @@ static int signal_ws_send(ws_s *s, ProtobufCMessage *request_or_response)
 		ws_msg.has_type = true;
 		ws_msg.type = SIGNALSERVICE__WEB_SOCKET_MESSAGE__TYPE__REQUEST;
 		ws_msg.request = (Signalservice__WebSocketRequestMessage *)request_or_response;
-		printf("sending request ws message: %s %s\n",
+		printf("sending request ws message: %s %s",
 		       ws_msg.request->verb, ws_msg.request->path);
+		if (ws_msg.request->has_id)
+			printf(" (id: %lu)", ws_msg.request->id);
+		printf("\n");
 	} else if (request_or_response->descriptor ==
 	           &signalservice__web_socket_response_message__descriptor) {
 		ws_msg.has_type = true;
 		ws_msg.type = SIGNALSERVICE__WEB_SOCKET_MESSAGE__TYPE__REQUEST;
 		ws_msg.response = (Signalservice__WebSocketResponseMessage *)request_or_response;
-		printf("sending response ws message: %d %s\n",
-		       ws_msg.response->has_status ? ws_msg.response->status : -1,
+		printf("sending response ws message: %d %s",
+		       ws_msg.response->has_status ? ws_msg.response->status : -1U,
 		       ws_msg.response->message);
+		if (ws_msg.response->has_id)
+			printf(" (id: %lu)", ws_msg.response->id);
+		printf("\n");
 	} else {
 		printf("sending unknown ws message (not actually)\n");
 		assert(0);
@@ -44,23 +51,24 @@ static int signal_ws_send(ws_s *s, ProtobufCMessage *request_or_response)
 }
 
 struct requested_subscription {
-	int (*on_response)(fio_str_info_s *msg, void *udata);
+	int (*on_response)(ws_s *ws, struct signal_response *r, void *udata);
 	void (*on_unsubscribe)(void *udata);
 	subscription_s *subs;
 	uint64_t id;
-	intptr_t uuid;
+	ws_s *ws;
 };
 
 static void _cancel_subscription1(void *udata)
 {
 	struct requested_subscription *s = udata;
-	fio_uuid_unlink(s->uuid, s);
+	fio_uuid_unlink(websocket_uuid(s->ws), s);
 	fio_unsubscribe(s->subs);
 }
 
 static void _cancel_subscription2(void *udata1, void *udata2)
 {
 	_cancel_subscription1(udata1);
+	(void)udata2;
 }
 
 static int32_t _id2filter(uint64_t id) { return id ^ (id >> 32); }
@@ -68,12 +76,30 @@ static int32_t _id2filter(uint64_t id) { return id ^ (id >> 32); }
 static void _on_requested_message(fio_msg_s *msg)
 {
 	struct requested_subscription *s = msg->udata2;
-	if (msg->filter != _id2filter(s->id))
+	if (msg->filter != _id2filter(s->id)) {
 		fprintf(stderr, "_on_requested_message: ids don't match "
 		        "(coincidence?): _id2filter(s->id): %u, msg->filter: %u\n",
 		        _id2filter(s->id), msg->filter);
-	else if (!s->on_response(&msg->msg, msg->udata1))
+		return;
+	}
+	struct fio_str_info_s *m = &msg->msg;
+	Signalservice__WebSocketResponseMessage *resp;
+	resp = signalservice__web_socket_response_message__unpack(NULL, m->len,
+	                                                          (uint8_t *)m->data);
+	assert(resp);
+	struct signal_response r = {
+		.status = resp->has_status ? resp->status : ~0U,
+		.message = resp->message,
+		.body = {
+			.len = resp->has_body ? resp->body.len : 0,
+			.data = resp->has_body ? (char *)resp->body.data : NULL
+		},
+		.n_headers = resp->n_headers,
+		.headers = resp->headers,
+	};
+	if (!s->on_response(s->ws, &r, msg->udata1))
 		fio_defer(_cancel_subscription2, s, NULL);
+	signalservice__web_socket_response_message__free_unpacked(resp, NULL);
 }
 
 static void _on_requested_unsubscribe(void *udata1, void *udata2)
@@ -114,12 +140,12 @@ int (signal_ws_send_request)(ws_s *s, char *verb, char *path,
 		p->on_response = args.on_response;
 		p->on_unsubscribe = args.on_unsubscribe;
 		p->id = req.id;
-		p->uuid = websocket_uuid(s);
-		p->subs = fio_subscribe(.filter = (int32_t)(req.id ^ (req.id >> 32)),
+		p->ws = s;
+		p->subs = fio_subscribe(.filter = _id2filter(req.id),
 		                        .udata1 = args.udata, .udata2 = p,
 		                        .on_message = _on_requested_message,
 		                        .on_unsubscribe = _on_requested_unsubscribe);
-		fio_uuid_link(p->uuid, p, _cancel_subscription1);
+		fio_uuid_link(websocket_uuid(s), p, _cancel_subscription1);
 	}
 	req.n_headers = args.n_headers;
 	req.headers = args.headers;
@@ -166,7 +192,7 @@ static void _on_ws_request(ws_s *s,
 }
 
 static void _on_ws_response(Signalservice__WebSocketResponseMessage *response,
-                            struct signal_ws_handler *h)
+                            struct signal_ws_handler *h, char *scratch)
 {
 	printf("ws response, status: ");
 	if (response->has_status)
@@ -178,11 +204,11 @@ static void _on_ws_response(Signalservice__WebSocketResponseMessage *response,
 		printf("  id: %lu\n", response->id);
 	if (response->has_body)
 		printf("  body size: %lu\n", response->body.len);
-	if (response->has_id && response->has_body) {
+	if (response->has_id) {
+		/* TODO: inefficient repacking of unpacked protobuf */
+		size_t sz = signalservice__web_socket_response_message__pack(response, (uint8_t *)scratch);
 		fio_publish(
-			.message = { .data = (char *)response->body.data,
-			             .len = response->body.len },
-			.is_json = true,
+			.message = { .data = scratch, .len = sz },
 			.filter = _id2filter(response->id)
 		);
 	}
@@ -212,7 +238,8 @@ static void _signal_ws_on_message(ws_s *ws, fio_str_info_s msg, uint8_t is_text)
 		break;
 	case SIGNALSERVICE__WEB_SOCKET_MESSAGE__TYPE__RESPONSE:
 		assert(ws_msg->response);
-		_on_ws_response(ws_msg->response, websocket_udata_get(ws));
+		_on_ws_response(ws_msg->response, websocket_udata_get(ws),
+		                msg.data);
 		break;
 	default:
 		printf("unknown ws_msg->type: %d\n", ws_msg->type);
@@ -223,25 +250,41 @@ static void _signal_ws_on_message(ws_s *ws, fio_str_info_s msg, uint8_t is_text)
 
 #define KEEPALIVE_TIMEOUT	55	/* seconds */
 
+static void _signal_ws_keepalive(void *udata);
+
+static void _signal_ws_run_timed_keepalive(ws_s *s)
+{
+	int r = fio_run_every(KEEPALIVE_TIMEOUT * 1000, 1,
+	                      _signal_ws_keepalive, s, NULL);
+	assert(r != -1);
+}
+
+static int _signal_ws_keepalive_on_response(ws_s *s, struct signal_response *r,
+                                            void *udata)
+{
+	if (200 <= r->status && r->status < 300)
+		_signal_ws_run_timed_keepalive(s);
+	else
+		printf("keep-alive request failed with status %u %s\n",
+		       r->status, r->message);
+	return 0;
+	(void)udata;
+}
+
 static void _signal_ws_keepalive(void *udata)
 {
 	ws_s *s = udata;
 	printf("sending keep-alive\n");
-	int r = signal_ws_send_request(s, "PUT", "/v1/keepalive");
-	if (r != -1) {
-		r = fio_run_every(KEEPALIVE_TIMEOUT * 1000, 1,
-		                  _signal_ws_keepalive, s, NULL);
-		assert(r != -1);
-	} else
+	int r = signal_ws_send_request(s, "GET", "/v1/keepalive",
+	                               .on_response = _signal_ws_keepalive_on_response);
+	if (r == -1)
 		printf("sending keep-alive failed\n");
 }
 
 static void _signal_ws_on_open(ws_s *s)
 {
 	printf("signal_ws_open\n");
-	int r = fio_run_every(KEEPALIVE_TIMEOUT * 1000, 1, _signal_ws_keepalive,
-	                      s, NULL);
-	assert(r != -1);
+	_signal_ws_run_timed_keepalive(s);
 	struct signal_ws_handler *h = websocket_udata_get(s);
 	if (h && h->on_open)
 		h->on_open(s, h->udata);
@@ -306,6 +349,7 @@ fio_tls_s * signal_tls(const char *cert_path)
 	return tls;
 }
 
+#ifdef KSIGNAL_SERVER_CERT
 int (signal_ws_connect)(const char *url, struct signal_ws_handler h)
 {
 	printf("signal ws connect to %s\n", url);
@@ -318,7 +362,7 @@ int (signal_ws_connect)(const char *url, struct signal_ws_handler h)
 		.on_close    = _signal_ws_on_close,
 		.udata       = memdup(&h, sizeof(h)),
 	};
-	fio_tls_s *tls = signal_tls("../whisper.store.asn1");
+	fio_tls_s *tls = signal_tls((KSIGNAL_SERVER_CERT));
 	int r = http_connect(url, NULL,
 	                     .on_request = _on_websocket_http_connected,
 	                     .on_response = _on_websocket_http_connected,
@@ -327,3 +371,6 @@ int (signal_ws_connect)(const char *url, struct signal_ws_handler h)
 	fio_tls_destroy(tls);
 	return r;
 }
+#else
+# error KSIGNAL_SERVER_CERT not defined (path of pinned server certificate)
+#endif

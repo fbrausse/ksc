@@ -1,6 +1,7 @@
 
 #include "ksignal-ws.h"
 #include "provisioning.h"
+#include "utils.h"
 #include "Provisioning.pb-c.h"
 
 static int _provisioning_handle_request(char *verb, char *path, uint64_t *id,
@@ -17,6 +18,7 @@ static int _provisioning_handle_request(char *verb, char *path, uint64_t *id,
 			ps->new_uuid(uuid_msg->uuid, ps->udata);
 		signalservice__provisioning_uuid__free_unpacked(uuid_msg, NULL);
 		return 0;
+		(void)id, (void)n_headers, (void)headers;
 	} else {
 		printf("handle_provisioning_request: cannot handle %s %s\n",
 		       verb, path);
@@ -36,8 +38,7 @@ static void _provisioning_on_close(intptr_t uuid, void *udata)
 int (ksignal_defer_get_new_uuid)(const char *base_url,
                                  struct provisioning_sock ps)
 {
-	char *url = NULL;
-	asprintf(&url, "%s/v1/websocket/provisioning/", base_url);
+	char *url = ckprintf("%s/v1/websocket/provisioning/", base_url);
 	int r = signal_ws_connect(url,
 		.on_open = NULL, /* nothing to do, server will send first request */
 		.handle_request = _provisioning_handle_request,
