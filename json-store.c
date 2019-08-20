@@ -222,9 +222,37 @@ fail:
 	return -1;
 }
 
-const struct kjson_value * json_store_get(const struct json_store *js)
+const char * json_store_get_username(const struct json_store *js)
 {
-	return &js->cfg;
+	struct kjson_value *v = kjson_get(&js->cfg, "username");
+	return v && v->type == KJSON_VALUE_STRING ? v->s.begin : NULL;
+}
+
+bool json_store_get_device_id(const struct json_store *js, int32_t *device_id)
+{
+	struct kjson_value *v = kjson_get(&js->cfg, "deviceId");
+	if (!v || v->type != KJSON_VALUE_NUMBER_INTEGER)
+		return false;
+	if (device_id)
+		*device_id = v->i;
+	return true;
+}
+
+const char * json_store_get_password_base64(const struct json_store *js)
+{
+	struct kjson_value *v = kjson_get(&js->cfg, "password");
+	return v && v->type == KJSON_VALUE_STRING ? v->s.begin : NULL;
+}
+
+const char * json_store_get_signaling_key_base64(const struct json_store *js,
+                                                 size_t *len)
+{
+	struct kjson_value *v = kjson_get(&js->cfg, "signalingKey");
+	if (!v || v->type != KJSON_VALUE_STRING)
+		return NULL;
+	if (len)
+		*len = v->s.len;
+	return v->s.begin;
 }
 
 static int kjscmp(const struct kjson_string *a, const char *b, size_t b_len)
@@ -479,12 +507,6 @@ static void sess_destroy_session_func(void *user_data)
 
 #define SESSION_STORE_LV(json_st) \
 	(signal_protocol_session_store)SESSION_STORE_INIT(json_st)
-
-void session_store_set(struct signal_protocol_session_store *r,
-                       struct json_store *st)
-{
-	*r = SESSION_STORE_LV(st);
-}
 
 static struct kjson_value * prek_store(struct json_store *js)
 {

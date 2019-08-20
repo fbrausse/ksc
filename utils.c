@@ -7,39 +7,6 @@
 #include <assert.h>
 #include <stdarg.h>
 
-bool cfg_init(FILE *f, struct cfg *cfg)
-{
-	size_t data_cap = 0;
-	size_t data_sz = 0;
-	static char buf[4096];
-	for (size_t rd; (rd = fread(buf, 1, sizeof(buf), f)) > 0;) {
-		size_t n = data_sz + rd;
-		if (n > data_cap) {
-			data_cap = MAX(n, 2 * data_cap);
-			cfg->data = realloc(cfg->data, data_cap);
-			assert(cfg->data);
-		}
-		memcpy(cfg->data + data_sz, buf, rd);
-		data_sz = n;
-		if (rd < sizeof(buf))
-			break;
-	}
-	assert(feof(f));
-	bool r = kjson_parse(&(struct kjson_parser){ cfg->data }, &cfg->v);
-	if (!r) {
-		free(cfg->data);
-		cfg->data = NULL;
-		assert(cfg->v.type == KJSON_VALUE_NULL);
-	}
-	return r;
-}
-
-void cfg_fini(struct cfg *cfg)
-{
-	kjson_value_fini(&cfg->v);
-	free(cfg->data);
-}
-
 struct kjson_value * kjson_get(const struct kjson_value *v, const char *key)
 {
 	assert(v->type == KJSON_VALUE_OBJECT);

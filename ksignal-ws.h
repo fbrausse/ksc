@@ -14,11 +14,11 @@ struct signal_ws_handler {
 	void (*on_open)(ws_s *s, void *udata);
 	void (*on_ready)(ws_s *s, void *udata);
 	/* return < 0 on error, status code > 0 for sending a reply and 0 for not replying */
-	int (*handle_request)(char *verb, char *path, uint64_t *id,
+	int (*handle_request)(ws_s *s, char *verb, char *path, uint64_t *id,
 	                      size_t n_headers, char **headers,
 	                      size_t size, uint8_t *body,
 	                      void *udata);
-	void (*handle_response)(char *message, uint32_t *status, uint64_t *id,
+	void (*handle_response)(ws_s *s, char *message, uint32_t *status, uint64_t *id,
 	                        size_t n_headers, char **headers,
 	                        size_t size, uint8_t *body,
 	                        void *udata);
@@ -54,7 +54,7 @@ int signal_ws_send_request(ws_s *s, char *verb, char *path,
 	                       (struct _signal_ws_send_request){ __VA_ARGS__ })
 int signal_ws_send_response(ws_s *s, int status, char *message, uint64_t *id);
 
-int signal_ws_connect(const char *url, struct signal_ws_handler h);
+intptr_t signal_ws_connect(const char *url, struct signal_ws_handler h);
 #define signal_ws_connect(url,...) \
 	signal_ws_connect((url), (struct signal_ws_handler){ __VA_ARGS__ })
 

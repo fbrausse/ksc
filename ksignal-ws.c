@@ -179,7 +179,7 @@ static void _on_ws_request(ws_s *s,
 		printf("  body size: %lu\n", request->body.len);
 	int r = 0;
 	if (h && h->handle_request)
-		r = h->handle_request(request->verb, request->path,
+		r = h->handle_request(s, request->verb, request->path,
 		                      request->has_id ? &request->id : NULL,
 		                      request->n_headers, request->headers,
 		                      request->has_body ? request->body.len : 0,
@@ -191,7 +191,8 @@ static void _on_ws_request(ws_s *s,
 		                        request->has_id ? &request->id : NULL);
 }
 
-static void _on_ws_response(Signalservice__WebSocketResponseMessage *response,
+static void _on_ws_response(ws_s *s,
+                            Signalservice__WebSocketResponseMessage *response,
                             struct signal_ws_handler *h, char *scratch)
 {
 	printf("ws response, status: ");
@@ -213,7 +214,7 @@ static void _on_ws_response(Signalservice__WebSocketResponseMessage *response,
 		);
 	}
 	if (h && h->handle_response)
-		h->handle_response(response->message,
+		h->handle_response(s, response->message,
 		                   response->has_status ? &response->status : NULL,
 		                   response->has_id     ? &response->id : NULL,
 		                   response->n_headers, response->headers,
@@ -238,7 +239,7 @@ static void _signal_ws_on_message(ws_s *ws, fio_str_info_s msg, uint8_t is_text)
 		break;
 	case SIGNALSERVICE__WEB_SOCKET_MESSAGE__TYPE__RESPONSE:
 		assert(ws_msg->response);
-		_on_ws_response(ws_msg->response, websocket_udata_get(ws),
+		_on_ws_response(ws, ws_msg->response, websocket_udata_get(ws),
 		                msg.data);
 		break;
 	default:
@@ -350,7 +351,7 @@ fio_tls_s * signal_tls(const char *cert_path)
 }
 
 #ifdef KSIGNAL_SERVER_CERT
-int (signal_ws_connect)(const char *url, struct signal_ws_handler h)
+intptr_t (signal_ws_connect)(const char *url, struct signal_ws_handler h)
 {
 	printf("signal ws connect to %s\n", url);
 	websocket_settings_s *ws_settings = malloc(sizeof(websocket_settings_s));

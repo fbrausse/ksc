@@ -16,16 +16,6 @@ static inline void * memdup(void *p, size_t sz) { return memcpy(malloc(sz), p, s
 
 #define KJSON_VALUE_INIT { .type = KJSON_VALUE_NULL, }
 
-struct cfg {
-	char *data;
-	struct kjson_value v;
-};
-
-#define CFG_INIT { NULL, KJSON_VALUE_INIT }
-
-bool cfg_init(FILE *f, struct cfg *cfg);
-void cfg_fini(struct cfg *cfg);
-
 struct kjson_value * kjson_get(const struct kjson_value *v, const char *key);
 
 struct kjson_value *        kjson_array_push_back (struct kjson_array *arr,

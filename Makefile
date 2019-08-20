@@ -15,17 +15,17 @@ override CPPFLAGS += \
 	$(CSTD) \
 
 override CFLAGS := \
-	-MD \
+	-MD -pthread \
 	-I../facil.io/libdump/include \
 	-I../kjson \
 	-I../libsignal-protocol-c/installed/include \
 	-Wall -Wextra \
 	$(CFLAGS) #-fsanitize=address
 
-LDFLAGS += \
+override LDFLAGS += -pthread \
 	-L../facil.io/tmp -Wl,-rpath,`realpath ../facil.io/tmp` \
 	-L../kjson -Wl,-rpath,`realpath ../kjson` \
-	-L../libsignal-protocol-c/installed/lib -Wl,-rpath,`realpath ../libsignal-protocol-c/installed/lib` \
+	-L../libsignal-protocol-c/build/src -Wl,-rpath,`realpath ../libsignal-protocol-c/build/src` \
 	#-fsanitize=address
 
 OBJS = \

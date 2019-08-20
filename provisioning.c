@@ -4,7 +4,7 @@
 #include "utils.h"
 #include "Provisioning.pb-c.h"
 
-static int _provisioning_handle_request(char *verb, char *path, uint64_t *id,
+static int _provisioning_handle_request(ws_s *ws, char *verb, char *path, uint64_t *id,
                                         size_t n_headers, char **headers,
                                         size_t size, uint8_t *body,
                                         void *udata)
@@ -18,12 +18,15 @@ static int _provisioning_handle_request(char *verb, char *path, uint64_t *id,
 			ps->new_uuid(uuid_msg->uuid, ps->udata);
 		signalservice__provisioning_uuid__free_unpacked(uuid_msg, NULL);
 		return 0;
-		(void)id, (void)n_headers, (void)headers;
 	} else {
 		printf("handle_provisioning_request: cannot handle %s %s\n",
 		       verb, path);
 		return -1;
 	}
+	(void)ws;
+	(void)id;
+	(void)n_headers;
+	(void)headers;
 }
 
 static void _provisioning_on_close(intptr_t uuid, void *udata)

@@ -7,6 +7,7 @@
 
 #include <assert.h>
 #include <time.h>	/* ctime_r() */
+#include <inttypes.h>	/* PRI* macros */
 
 #include <gcrypt.h>
 
@@ -81,24 +82,24 @@ fail:
  *       SIGNALING_KEY = CIPHER_KEY MAC_KEY
  */
 static bool decrypt_envelope(uint8_t **body_ptr, size_t *size_ptr,
-                             const struct kjson_value *cfg)
+                             const char *signaling_key_base64,
+                             size_t signaling_key_base64_len)
 {
 	uint8_t *body = *body_ptr;
 	size_t size = *size_ptr;
 
 	if (size < VERSION_LENGTH || body[VERSION_OFFSET] != VERSION_SUPPORTED)
 		return false;
-	const struct kjson_value *key = kjson_get(cfg, "signalingKey");
-	assert(key);
+	assert(signaling_key_base64);
 	/* properties of base64 */
-	assert(key->s.len >= (4*(CIPHER_KEY_SIZE + MAC_KEY_SIZE) + 2) / 3);
-	assert(key->s.len <= (4*(CIPHER_KEY_SIZE + MAC_KEY_SIZE + 2)) / 3);
+	assert(signaling_key_base64_len >= (4*(CIPHER_KEY_SIZE + MAC_KEY_SIZE) + 2) / 3);
+	assert(signaling_key_base64_len <= (4*(CIPHER_KEY_SIZE + MAC_KEY_SIZE + 2)) / 3);
 	uint8_t decoded_key[CIPHER_KEY_SIZE + MAC_KEY_SIZE];
-	ssize_t r = base64_decode(decoded_key, key->s.begin, key->s.len);
+	ssize_t r = base64_decode(decoded_key, signaling_key_base64, signaling_key_base64_len);
 	if (r != CIPHER_KEY_SIZE + MAC_KEY_SIZE) {
 		fprintf(stderr,
 		        "error decoding signalingKey of length %zu: r: %zd\n",
-		        key->s.len, r);
+		        signaling_key_base64_len, r);
 		return false;
 	}
 	const uint8_t *cipher_key = decoded_key;
@@ -578,6 +579,7 @@ static int decrypt_callback(session_cipher *cipher, signal_buffer *plaintext,
 			printf("  message timer: %ud\n", e->messagetimer);
 	}
 	signalservice__content__free_unpacked(c, NULL);
+	return 0;
 	return -1; /* fail s.t. the session does not get updated */
 	(void)cipher;
 	(void)decrypt_context;
@@ -589,13 +591,38 @@ static void ctx_log(int level, const char *message, size_t len, void *user_data)
 	(void)user_data;
 }
 
-static int handle_request(char *verb, char *path, uint64_t *id,
+static int ack_message_on_response(ws_s *ws, struct signal_response *r,
+                                   void *udata)
+{
+	printf("message deletion response line: %d %s\n", r->status, r->message);
+	return 0;
+	(void)ws;
+	(void)udata;
+}
+
+static void ack_message(void *udata1, void *udata2)
+{
+	ws_s *s = udata1;
+	char *path = udata2;
+	signal_ws_send_request(s, "DELETE", path,
+	                       .on_response = ack_message_on_response);
+	free(path);
+}
+
+static void defer_ack_message(ws_s *s, const Signalservice__Envelope *e)
+{
+	char *path = e->serverguid
+	           ? ckprintf("/v1/messages/uuid/%s", e->serverguid)
+	           : ckprintf("/v1/messages/%s/%lu", e->source, e->timestamp);
+	fio_defer(ack_message, s, path);
+}
+
+static int handle_request(ws_s *ws, char *verb, char *path, uint64_t *id,
                           size_t n_headers, char **headers,
                           size_t size, uint8_t *body,
                           void *udata)
 {
 	struct json_store *js = udata;
-	const struct kjson_value *cfg = json_store_get(js);
 	bool is_enc = is_request_signal_key_encrypted(n_headers, headers);
 
 	if (!strcmp(verb, "PUT") && !strcmp(path, "/api/v1/message")) {
@@ -603,7 +630,11 @@ static int handle_request(char *verb, char *path, uint64_t *id,
 		printf("message received, encrypted: %d\n", is_enc);/*
 		print_hex(stdout, body, size);
 		printf("\n");*/
-		if (is_enc && !decrypt_envelope(&body, &size, cfg)) {
+		size_t sg_key_b64_len;
+		const char *sg_key_b64 =
+			json_store_get_signaling_key_base64(js, &sg_key_b64_len);
+		if (is_enc && !decrypt_envelope(&body, &size,
+		                                sg_key_b64, sg_key_b64_len)) {
 			fprintf(stderr, "error decrypting envelope\n");
 			return -1;
 		}
@@ -664,6 +695,9 @@ static int handle_request(char *verb, char *path, uint64_t *id,
 
 			SIGNAL_UNREF(msg);
 		}
+		if (!r || r == SG_ERR_DUPLICATE_MESSAGE)
+			defer_ack_message(ws, e);
+
 		signal_buffer_free(plaintext);
 		session_cipher_free(cipher);
 		session_builder_free(sb);
@@ -698,6 +732,26 @@ static int recv_get_profile(ws_s *ws, struct signal_response *r, void *udata)
 	struct kjson_value *cfg = udata;
 	fprintf(stderr, "recv get profile: %u %s: ",
 	        r->status, r->message);
+
+	if (r->status != 200) {
+		fprintf(stderr, "\n");
+		return 0;
+	}
+
+	FIOBJ profile;
+	size_t parsed = fiobj_json2obj(&profile, r->body.data, r->body.len);
+	fprintf(stderr, "fio json parsed %zu of %zu",
+	        parsed, r->body.len);
+	if (parsed) {
+		FIOBJ str = fiobj_obj2json(profile, 1);
+		fio_str_info_s s = fiobj_obj2cstr(str);
+		fprintf(stderr, ": %.*s\n", (int)s.len, s.data);
+		fiobj_free(str);
+		fiobj_free(profile);
+	} else
+		fprintf(stderr, ", failed\n");
+
+	fprintf(stderr, "recv get profile: ");
 	struct kjson_value p = KJSON_VALUE_INIT;
 	if (kjson_parse(&(struct kjson_parser){ r->body.data }, &p)) {
 		kjson_value_print(stderr, &p);
@@ -706,6 +760,7 @@ static int recv_get_profile(ws_s *ws, struct signal_response *r, void *udata)
 		fprintf(stderr, "error parsing profile json: '%.*s'\n",
 		        (int)r->body.len, r->body.data);
 	kjson_value_fini(&p);
+
 	return 0;
 	(void)cfg;
 	(void)ws;
@@ -744,75 +799,60 @@ static void send_get_profile(ws_s *s, void *udata)
 	signal_ws_send_request(s, "GET", "/v1/certificate/delivery",
 	                       .on_response = recv_get_cert_delivery,
 	                       .udata = udata);
+#else
+	(void)s;
+	(void)udata;
 #endif
 }
 
-#ifndef DEFAULT_NUMBER
-# define DEFAULT_NUMBER		NULL
-#endif
-#ifndef DEFAULT_CLI_PATH
-# define DEFAULT_CLI_PATH	NULL
+#ifndef DEFAULT_CLI_CONFIG
+# define DEFAULT_CLI_CONFIG	NULL
 #endif
 
 static const char BASE_URL[] = "wss://textsecure-service.whispersystems.org:443";
 
 int main(int argc, char **argv)
 {
-	const char *number = DEFAULT_NUMBER;
-	const char *cli_path = DEFAULT_CLI_PATH;
-	for (int opt; (opt = getopt(argc, argv, ":hp:u:")) != -1;)
+	const char *cli_path = DEFAULT_CLI_CONFIG;
+	for (int opt; (opt = getopt(argc, argv, ":hp:")) != -1;)
 		switch (opt) {
 		case 'h':
-			fprintf(stderr, "usage: %s [-u NUMBER] [-p CLI_PATH]\n", argv[0]);
+			fprintf(stderr, "usage: %s [-p CLI_CONFIG_PATH]\n", argv[0]);
 			exit(0);
 		case 'p': cli_path = optarg; break;
-		case 'u': number = optarg; break;
 		case ':': DIE(1,"error: option '-%c' requires a parameter\n",
 		              optopt);
 		case '?': DIE(1,"error: unknown option '-%c'\n",optopt);
 		}
 
-	struct json_store *js = NULL;
-	js = json_store_create(number);
-	printf("js: %p\n", (void *)js);
-	if (!js)
+	if (!cli_path) {
+		fprintf(stderr, "require path to JSON config file\n");
 		return 1;
-#if 1
-	const struct kjson_value *cfg = json_store_get(js);
-	(void)cli_path;
-#else
-	struct cfg cfg = CFG_INIT;
-	if (cli_path) {
-		char *cli_cfg_path = ckprintf("%s/%s", cli_path, number);
-
-		FILE *f = fopen(cli_cfg_path, "r");
-		if (!f) {
-			fprintf(stderr, "%s: %s: performing a link\n",
-				cli_cfg_path, strerror(errno));
-		} else {
-			if (!cfg_init(f, &cfg))
-				fprintf(stderr, "%s: error parsing config\n",
-					cli_cfg_path);
-			fclose(f);
-		}
-		free(cli_cfg_path);
 	}
-#endif
 
-	const char *password = NULL;
-	if (cfg->type == KJSON_VALUE_OBJECT) {
-		const struct kjson_value *pwd = kjson_get(cfg, "password");
-		if (pwd)
-			password = pwd->s.begin;
+	struct json_store *js = NULL;
+	js = json_store_create(cli_path);
+	printf("js: %p\n", (void *)js);
+	if (!js) {
+		fprintf(stderr, "%s: error reading JSON config file\n", cli_path);
+		return 1;
 	}
+
+	const char *number = json_store_get_username(js);
+	const char *password = json_store_get_password_base64(js);
 	int r = 0;
 	char *url = NULL;
-	if (cfg->type == KJSON_VALUE_NULL) {
+	if (!number) {
+		fprintf(stderr, "no username, performing a device link\n");
 		r = ksignal_defer_get_new_uuid(BASE_URL,
 		                               .new_uuid = handle_new_uuid,
 		                               .on_close = on_close_do_stop);
 	} else if (password) {
-		url = ckprintf("%s/v1/websocket/?login=%s&password=%s",
+		int32_t device_id;
+		url = json_store_get_device_id(js, &device_id)
+		    ? ckprintf("%s/v1/websocket/?login=%s.%" PRId32 "&password=%s",
+		               BASE_URL, number, device_id, password)
+		    : ckprintf("%s/v1/websocket/?login=%s&password=%s",
 		               BASE_URL, number, password);
 		r = signal_ws_connect(url,
 			.on_open = send_get_profile,
@@ -822,31 +862,24 @@ int main(int argc, char **argv)
 			.on_close = on_close_do_stop,
 		);
 	} else {
-		fprintf(stderr, "don't know what to do, cfg->type: %d\n",
-		        cfg->type);
+		fprintf(stderr, "don't know what to do, username but no password\n");
 		r = 1;
 	}
 	printf("%d\n", r);
 	fio_start(.threads=1);
 	free(url);
-#if 0
-	cfg_fini(&cfg);
-#endif
 
-	if (js) {
-		cfg = NULL;
+	r = json_store_save(js);
+	printf("json_store_save returned %d\n", r);
+	if (!r) {
+		r = json_store_load(js);
+		printf("json_store_load returned %d\n", r);
+		r = !r;
+	}
+	if (!r) {
 		r = json_store_save(js);
 		printf("json_store_save returned %d\n", r);
-		if (!r) {
-			r = json_store_load(js);
-			printf("json_store_load returned %d\n", r);
-			r = !r;
-		}
-		if (!r) {
-			r = json_store_save(js);
-			printf("json_store_save returned %d\n", r);
-		}
-		json_store_destroy(js);
 	}
+	json_store_destroy(js);
 	return 0;
 }
