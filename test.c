@@ -178,12 +178,15 @@ These should be ACK-ed as per fio_defer(delete_request) ...
 static void send_get_profile(ws_s *s, void *udata)
 {
 #if 0 && defined(DEFAULT_GET_PROFILE_NUMBER)
+	// works
 	signal_ws_send_request(s, "GET",
 	                       "/v1/profile/" DEFAULT_GET_PROFILE_NUMBER,
 	                       .on_response = recv_get_profile, .udata = udata);
+	// fails
 	signal_ws_send_request(s, "GET",
 	                       "/v2/keys/" DEFAULT_GET_PROFILE_NUMBER "/*",
 	                       .on_response = recv_get_pre_key, .udata = udata);
+	// fails
 	signal_ws_send_request(s, "GET", "/v1/certificate/delivery",
 	                       .on_response = recv_get_cert_delivery,
 	                       .udata = udata);
