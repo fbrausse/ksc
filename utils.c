@@ -16,7 +16,8 @@ struct kjson_value * kjson_get(const struct kjson_value *v, const char *key)
 	return NULL;
 }
 
-struct kjson_value * kjson_array_push_back(struct kjson_array *arr, struct kjson_value v)
+struct kjson_value * (kjson_array_push_back)(struct kjson_array *arr,
+                                             struct kjson_value v)
 {
 	/* XXX: inefficient */
 	arr->data = realloc(arr->data, sizeof(*arr->data) * (arr->n+1));
@@ -25,7 +26,8 @@ struct kjson_value * kjson_array_push_back(struct kjson_array *arr, struct kjson
 	return r;
 }
 
-struct kjson_object_entry * kjson_object_push_back(struct kjson_object *obj, struct kjson_object_entry v)
+struct kjson_object_entry * (kjson_object_push_back)(struct kjson_object *obj,
+                                                     struct kjson_object_entry v)
 {
 	/* XXX: inefficient */
 	obj->data = realloc(obj->data, sizeof(*obj->data) * (obj->n+1));

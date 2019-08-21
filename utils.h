@@ -20,8 +20,13 @@ struct kjson_value * kjson_get(const struct kjson_value *v, const char *key);
 
 struct kjson_value *        kjson_array_push_back (struct kjson_array *arr,
                                                    struct kjson_value v);
+#define kjson_array_push_back(arr,...) \
+	kjson_array_push_back((arr),(struct kjson_value){ __VA_ARGS__ })
+
 struct kjson_object_entry * kjson_object_push_back(struct kjson_object *obj,
                                                    struct kjson_object_entry v);
+#define kjson_object_push_back(obj,...) \
+	kjson_object_push_back((obj),(struct kjson_object_entry){ __VA_ARGS__ })
 
 void kjson_array_remove (struct kjson_array *arr, struct kjson_value *v);
 void kjson_object_remove(struct kjson_object *arr,

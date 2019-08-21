@@ -1,4 +1,10 @@
 
+/*
+ * This file provides access to JSON config file in the format used by
+ * signal-cli and signald.  It also implements the storage providers required
+ * by libsignal-protocol-c on top of that.
+ */
+
 #include "json-store.h"
 #include "utils.h"
 
@@ -65,64 +71,64 @@ bool json_store_load(struct json_store *js)
 		struct kjson_value *ax;
 		if (!(ax = kjson_get(&js->cfg, "axolotlStore"))) {
 			modified = true;
-			ax = &kjson_object_push_back(&js->cfg.o, (struct kjson_object_entry){
+			ax = &kjson_object_push_back(&js->cfg.o,
 				.key = { .begin = "axolotlStore", .len = 12 },
 				.value = {
 					.type = KJSON_VALUE_OBJECT,
 					.o = { .n = 0, .data = NULL },
 				},
-			})->value;
+			)->value;
 		}
 		if (!kjson_get(ax, "sessionStore")) {
 			modified = true;
-			kjson_object_push_back(&ax->o, (struct kjson_object_entry){
+			kjson_object_push_back(&ax->o,
 				.key = { .begin = "sessionStore", .len = 12 },
 				.value = {
 					.type = KJSON_VALUE_ARRAY,
 					.a = { .n = 0, .data = NULL },
 				},
-			});
+			);
 		}
 		if (!kjson_get(ax, "preKeys")) {
 			modified = true;
-			kjson_object_push_back(&ax->o, (struct kjson_object_entry){
+			kjson_object_push_back(&ax->o,
 				.key = { .begin = "preKeys", .len = 7 },
 				.value = {
 					.type = KJSON_VALUE_ARRAY,
 					.a = { .n = 0, .data = NULL },
 				},
-			});
+			);
 		}
 		if (!kjson_get(ax, "signedPreKeyStore")) {
 			modified = true;
-			kjson_object_push_back(&ax->o, (struct kjson_object_entry){
+			kjson_object_push_back(&ax->o,
 				.key = { .begin = "signedPreKeyStore", .len = 17 },
 				.value = {
 					.type = KJSON_VALUE_ARRAY,
 					.a = { .n = 0, .data = NULL },
 				},
-			});
+			);
 		}
 		struct kjson_value *idk;
 		if (!(idk = kjson_get(ax, "identityKeyStore"))) {
 			modified = true;
-			idk = &kjson_object_push_back(&ax->o, (struct kjson_object_entry){
+			idk = &kjson_object_push_back(&ax->o,
 				.key = { .begin = "identityKeyStore", .len = 16 },
 				.value = {
 					.type = KJSON_VALUE_OBJECT,
 					.o = { .n = 0, .data = NULL },
 				},
-			})->value;
+			)->value;
 		}
 		if (!kjson_get(idk, "trustedKeys")) {
 			modified = true;
-			kjson_object_push_back(&idk->o, (struct kjson_object_entry){
+			kjson_object_push_back(&idk->o,
 				.key = { "trustedKeys", 11 },
 				.value = {
 					.type = KJSON_VALUE_ARRAY,
 					.a = { .n = 0, .data = NULL },
 				},
-			});
+			);
 		}
 		if (modified)
 			r = json_store_save(js) < 0 ? false : true;
@@ -428,7 +434,7 @@ static int sess_store_session_func(const signal_protocol_address *address,
 		.o = { .data = entries, .n = ARRAY_SIZE(entries), },
 	};
 	struct kjson_value e = kjson_value_dup(&entry);
-	kjson_array_push_back(&st->a, e);
+	(kjson_array_push_back)(&st->a, e);
 	r = json_store_save(js);
 	if (r < 0) {
 		kjson_value_fini(&e);
@@ -600,7 +606,7 @@ static int prek_store_pre_key(uint32_t pre_key_id, uint8_t *record,
 			.s = { record_enc, n },
 		} },
 	};
-	kjson_array_push_back(&st->a, kjson_value_dup(&(struct kjson_value){
+	(kjson_array_push_back)(&st->a, kjson_value_dup(&(struct kjson_value){
 		.type = KJSON_VALUE_OBJECT,
 		.o = { .n = ARRAY_SIZE(entries), .data = entries },
 	}));
@@ -727,7 +733,7 @@ static int sipk_store_signed_pre_key(uint32_t signed_pre_key_id,
 			.s = { record_enc, n },
 		} },
 	};
-	kjson_array_push_back(&st->a, kjson_value_dup(&(struct kjson_value){
+	(kjson_array_push_back)(&st->a, kjson_value_dup(&(struct kjson_value){
 		.type = KJSON_VALUE_OBJECT,
 		.o = { .n = ARRAY_SIZE(entries), .data = entries },
 	}));
@@ -908,7 +914,6 @@ static int idk_save_identity(const signal_protocol_address *address,
 	struct kjson_value *st = idk_store(js);
 	struct kjson_value *tk = kjson_get(st, "trustedKeys");
 	struct kjson_value *e = idk_lookup_tk(st, address);
-	struct kjson_array org_tk = tk->a;
 	if (!e) {
 		size_t len = address->name_len;
 		char *name = memcpy(json_store_alloc(js, len), address->name, len);
@@ -918,7 +923,7 @@ static int idk_save_identity(const signal_protocol_address *address,
 				.s = { name, len },
 			} },
 		};
-		e = kjson_array_push_back(&tk->a, kjson_value_dup(&(struct kjson_value){
+		e = (kjson_array_push_back)(&tk->a, kjson_value_dup(&(struct kjson_value){
 			.type = KJSON_VALUE_OBJECT,
 			.o = { .n = ARRAY_SIZE(entries), .data = entries },
 		}));
@@ -938,13 +943,13 @@ static int idk_save_identity(const signal_protocol_address *address,
 			idk->s = record_str;
 		} else {
 			/* insert idk into e */
-			kjson_object_push_back(&e->o, (struct kjson_object_entry){
+			kjson_object_push_back(&e->o,
 				.key = { "identityKey", 11 },
 				.value = {
 					.type = KJSON_VALUE_STRING,
 					.s = record_str,
 				},
-			});
+			);
 		}
 	} else if (idk) {
 		/* remove idk from e */
