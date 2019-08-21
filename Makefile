@@ -1,39 +1,62 @@
 
-CFLAGS ?= -g
+CFLAGS  ?= -g
 LDFLAGS ?= -Wl,--as-needed
+OPTS    ?= #-flto
+CLDFLAGS ?= \
+	#-fsanitize=address \
+	#-fsanitize=undefined \
+	#-pthread \
 
 -include default.mk
 
 my_datadir ?= $(datadir)/ksignal
 
-CSTD = -std=c99
-
 TS_SERVER_CERT = $(my_datadir)/whisper.store.asn1
 
+ifdef GCRYPT
+  CRYPT_OBJS = crypto-gcrypt.o
+  test: override LDLIBS += -lgcrypt
+else
+  CRYPT_OBJS = crypto-openssl-11.o
+  test: override LDLIBS += -lcrypto
+endif
+
+CSTD = -std=c99
+
 override CPPFLAGS += \
-	-D_POSIX_C_SOURCE=200809L -D_DEFAULT_SOURCE \
+	-D_POSIX_C_SOURCE=200809L \
+	-D_DEFAULT_SOURCE \
 	$(CSTD) \
 
+override CLDFLAGS := \
+	$(CSTD) \
+	$(OPTS) \
+	$(CLDFLAGS)
+
 override CFLAGS := \
-	-MD -pthread \
+	-MD \
 	-I../facil.io/libdump/include \
 	-I../kjson \
 	-I../libsignal-protocol-c/installed/include \
 	-Wall -Wextra \
-	$(CFLAGS) #-fsanitize=address
+	$(CLDFLAGS) \
+	$(CFLAGS) \
 
-override LDFLAGS += -pthread \
+override LDFLAGS := \
 	-L../facil.io/tmp -Wl,-rpath,`realpath ../facil.io/tmp` \
 	-L../kjson -Wl,-rpath,`realpath ../kjson` \
 	-L../libsignal-protocol-c/build/src -Wl,-rpath,`realpath ../libsignal-protocol-c/build/src` \
-	#-fsanitize=address
+	$(CLDFLAGS) \
+	$(LDFLAGS) \
 
 OBJS = \
 	test.o \
 	provisioning.o \
 	ksignal-ws.o \
 	utils.o \
+	crypto.o \
 	json-store.o \
+	$(CRYPT_OBJS) \
 	$(PROTO_FILES:.proto=.pb-c.o) \
 
 SERVICE_PROTO_FILES = \
@@ -54,7 +77,7 @@ PROTO_INCLUDE = $(shell echo ~/dev/libsignal-service-java/protobuf)
 
 all: test
 
-test: LDLIBS += -lfacil -lprotobuf-c -lkjson -lgcrypt -lsignal-protocol-c -lm
+test: override LDLIBS += -lfacil -lprotobuf-c -lkjson -lsignal-protocol-c -lm
 test: $(OBJS)
 
 $(OBJS): %.o: %.c Makefile protos
