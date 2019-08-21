@@ -207,6 +207,20 @@ static bool on_content(ws_s *ws, const Signalservice__Envelope *e,
 	(void)udata;
 }
 
+static void ctx_log(enum ksc_ws_log level, const char *message, size_t len,
+                    void *udata)
+{
+	static const char *const lvls[] = {
+		[KSC_WS_LOG_DEBUG  ] = "debug",
+		[KSC_WS_LOG_INFO   ] = "info ",
+		[KSC_WS_LOG_NOTICE ] = "note ",
+		[KSC_WS_LOG_WARNING] = "warn ",
+		[KSC_WS_LOG_ERROR  ] = "error",
+	};
+	printf("[%s] signal ctx: %.*s\n", lvls[level], (int)len, message);
+	(void)udata;
+}
+
 #ifndef DEFAULT_CLI_CONFIG
 # define DEFAULT_CLI_CONFIG	NULL
 #endif
@@ -248,14 +262,16 @@ int main(int argc, char **argv)
 		                               .new_uuid = handle_new_uuid,
 		                               .on_close = on_close_do_stop);
 	} else if (password) {
-		ksc_ws_connect(js, .on_content = on_content,
-		                   .on_open = send_get_profile,
-		                   .on_close = on_close_do_stop);
+		r = ksc_ws_connect(js, .on_content = on_content,
+		                       .on_open = send_get_profile,
+		                       .on_close = on_close_do_stop,
+		                       .signal_ctx_log = ctx_log) ? 0 : 1;
 	} else {
 		fprintf(stderr, "don't know what to do, username but no password\n");
 		r = 1;
 	}
 	printf("%d\n", r);
+
 	fio_start(.threads=1);
 
 	r = json_store_save(js);
