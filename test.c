@@ -2,6 +2,7 @@
 #include "ksignal-ws.h"
 #include "provisioning.h"
 #include "utils.h"
+#include "crypto.h"
 #include "json-store.h"
 #include "SignalService.pb-c.h"
 
@@ -9,158 +10,12 @@
 #include <time.h>	/* ctime_r() */
 #include <inttypes.h>	/* PRI* macros */
 
-#include <gcrypt.h>
-
 #include <signal/protocol.h>
 #include <signal/signal_protocol.h>
-#include <signal/session_builder.h>
 #include <signal/session_cipher.h>
 
-#define VERSION_OFFSET		0
-#define VERSION_SUPPORTED	1
-#define VERSION_LENGTH		1
-
-#define CIPHER_KEY_SIZE		32
-#define MAC_KEY_SIZE		20
-#define MAC_SIZE		10
-
-#define IV_LENGTH		16
-// #define IV_OFFSET		(VERSION_OFFSET + VERSION_LENGTH)
-// #define CIPHERTEXT_OFFSET	(IV_OFFSET + IV_LENGTH
-
-_Static_assert(VERSION_OFFSET == 0, "keep in sync with libsignal-service-*");
-
-#define FAIL(lbl,...) do { fprintf(stderr, __VA_ARGS__); goto lbl; } while (0)
-
-static bool verify_envelope(const uint8_t *body, size_t *size_ptr,
-                            const uint8_t *mac_key)
-{
-	size_t size = *size_ptr;
-
-	/* verify HmacSHA256 */
-	if (size < MAC_SIZE + 1)
-		return false;
-	gcry_md_hd_t hd;
-	gcry_error_t gr;
-	gr = gcry_md_open(&hd, GCRY_MD_SHA256, GCRY_MD_FLAG_HMAC);
-	if (gr)
-		FAIL(fail, "error on gcry_md_open: %x\n", gr);
-	gr = gcry_md_setkey(hd, mac_key, MAC_KEY_SIZE);
-	if (gr)
-		FAIL(mac_fail, "error on gcry_md_setkey: %x\n", gr);
-	gcry_md_write(hd, body, size - MAC_SIZE);
-	gcry_md_final(hd);
-	const uint8_t *our_mac = gcry_md_read(hd, GCRY_MD_SHA256);
-	assert(our_mac);
-	const uint8_t *their_mac = body + size - MAC_SIZE;
-	if (memcmp(our_mac, their_mac, MAC_SIZE)) {
-		fprintf(stderr, "MACs don't match:\n");
-		fprintf(stderr, "  ours  : ");
-		print_hex(stderr, our_mac, MAC_SIZE);
-		fprintf(stderr, "\n  theirs: ");
-		print_hex(stderr, their_mac, MAC_SIZE);
-		fprintf(stderr, "\n");
-		goto mac_fail;
-	}
-	gcry_md_close(hd);
-
-	// fprintf(stderr, "MACs match! :)\n");
-
-	size -= MAC_SIZE;
-	*size_ptr = size;
-	return true;
-
-mac_fail:
-	gcry_md_close(hd);
-fail:
-	return false;
-}
-
-/* body == VERSION IV CIPHERTEXT MAC
- * where MAC           = HMAC-SHA256(VERSION IV CIPHERTEXT, MAC_KEY)
- *       CIPHERTEXT    = ENC-AES256(PKCS5PAD(PLAINTEXT), IV, CBC, CIPHER_KEY)
- *       SIGNALING_KEY = CIPHER_KEY MAC_KEY
- */
-static bool decrypt_envelope(uint8_t **body_ptr, size_t *size_ptr,
-                             const char *signaling_key_base64,
-                             size_t signaling_key_base64_len)
-{
-	uint8_t *body = *body_ptr;
-	size_t size = *size_ptr;
-
-	if (size < VERSION_LENGTH || body[VERSION_OFFSET] != VERSION_SUPPORTED)
-		return false;
-	assert(signaling_key_base64);
-	/* properties of base64 */
-	assert(signaling_key_base64_len >= (4*(CIPHER_KEY_SIZE + MAC_KEY_SIZE) + 2) / 3);
-	assert(signaling_key_base64_len <= (4*(CIPHER_KEY_SIZE + MAC_KEY_SIZE + 2)) / 3);
-	uint8_t decoded_key[CIPHER_KEY_SIZE + MAC_KEY_SIZE];
-	ssize_t r = base64_decode(decoded_key, signaling_key_base64, signaling_key_base64_len);
-	if (r != CIPHER_KEY_SIZE + MAC_KEY_SIZE) {
-		fprintf(stderr,
-		        "error decoding signalingKey of length %zu: r: %zd\n",
-		        signaling_key_base64_len, r);
-		return false;
-	}
-	const uint8_t *cipher_key = decoded_key;
-	const uint8_t *mac_key = decoded_key + CIPHER_KEY_SIZE;
-
-	if (!verify_envelope(body, &size, mac_key))
-		return false;
-	size -= VERSION_LENGTH;
-	body += VERSION_LENGTH;
-
-	/* decode AES/CBC/PKCS5Padding */
-	gcry_cipher_hd_t ci;
-	gcry_error_t gr;
-	gr = gcry_cipher_open(&ci, GCRY_CIPHER_AES256, GCRY_CIPHER_MODE_CBC, 0);
-	if (gr)
-		FAIL(fail, "error on gcry_cipher_open: %x\n", gr);
-	gr = gcry_cipher_setkey(ci, cipher_key, CIPHER_KEY_SIZE);
-	if (gr)
-		FAIL(cipher_fail, "error on gcry_cipher_setkey: %x\n", gr);
-	gr = gcry_cipher_setiv(ci, body, IV_LENGTH);
-	if (gr)
-		FAIL(cipher_fail, "error on gcry_cipher_setiv: %x\n", gr);
-	size -= IV_LENGTH;
-	body += IV_LENGTH;
-	gr = gcry_cipher_final(ci);
-	if (gr)
-		FAIL(cipher_fail, "error on gcry_cipher_final: %x\n", gr);
-	gr = gcry_cipher_decrypt(ci, body, size, NULL, 0);
-	if (gr)
-		FAIL(cipher_fail, "error on gcry_cipher_decrypt: %x\n", gr);
-	gcry_cipher_close(ci);
-
-	/* remove PKCS5Padding */
-	if (!size)
-		FAIL(fail, "size of decrypted envelope is zero\n");
-	unsigned n = body[size-1];
-	if (size < n)
-		FAIL(fail, "size of decrypted envelope is smaller than "
-		           "PKCS5Padding's value\n");
-	for (unsigned i=0; i<n; i++)
-		if (body[size-n+i] != n)
-			FAIL(fail,
-			     "PKCS5Padding of decrypted envelope is broken\n");
-	size -= n;
-
-	/*
-	fprintf(stderr, "success: ");
-	print_hex(stderr, body, size);
-	fprintf(stderr, "\n");*/
-
-	*body_ptr = body;
-	*size_ptr = size;
-	return true;
-
-cipher_fail:
-	gcry_cipher_close(ci);
-fail:
-	return false;
-}
-
-static bool is_request_signal_key_encrypted(size_t n_headers, char *const *headers)
+static bool is_request_signal_key_encrypted(size_t n_headers,
+                                            char *const *headers)
 {
 	for (size_t i=0; i<n_headers; i++) {
 		char *header = headers[i];
@@ -176,17 +31,25 @@ static bool is_request_signal_key_encrypted(size_t n_headers, char *const *heade
 	return true;
 }
 
+/* shortcuts */
+#define UNKNOWN             SIGNALSERVICE__ENVELOPE__TYPE__UNKNOWN
+#define CIPHERTEXT          SIGNALSERVICE__ENVELOPE__TYPE__CIPHERTEXT
+#define KEY_EXCHANGE        SIGNALSERVICE__ENVELOPE__TYPE__KEY_EXCHANGE
+#define PREKEY_BUNDLE       SIGNALSERVICE__ENVELOPE__TYPE__PREKEY_BUNDLE
+#define RECEIPT             SIGNALSERVICE__ENVELOPE__TYPE__RECEIPT
+#define UNIDENTIFIED_SENDER SIGNALSERVICE__ENVELOPE__TYPE__UNIDENTIFIED_SENDER
+
 static void print_envelope(const Signalservice__Envelope *e)
 {
 	if (e->has_type) {
 		const char *type = NULL;
 		switch (e->type) {
-		case SIGNALSERVICE__ENVELOPE__TYPE__UNKNOWN: type = "unknown"; break;
-		case SIGNALSERVICE__ENVELOPE__TYPE__CIPHERTEXT: type = "ciphertext"; break;
-		case SIGNALSERVICE__ENVELOPE__TYPE__KEY_EXCHANGE: type = "key exchange"; break;
-		case SIGNALSERVICE__ENVELOPE__TYPE__PREKEY_BUNDLE: type = "prekey bundle"; break;
-		case SIGNALSERVICE__ENVELOPE__TYPE__RECEIPT: type = "receipt"; break;
-		case SIGNALSERVICE__ENVELOPE__TYPE__UNIDENTIFIED_SENDER: type = "unidentified sender"; break;
+		case UNKNOWN            : type = "unknown"; break;
+		case CIPHERTEXT         : type = "ciphertext"; break;
+		case KEY_EXCHANGE       : type = "key exchange"; break;
+		case PREKEY_BUNDLE      : type = "prekey bundle"; break;
+		case RECEIPT            : type = "receipt"; break;
+		case UNIDENTIFIED_SENDER: type = "unidentified sender"; break;
 		case _SIGNALSERVICE__ENVELOPE__TYPE_IS_INT_SIZE: break;
 		}
 		printf("  type: %s (%d)\n", type, e->type);
@@ -225,312 +88,52 @@ static void print_envelope(const Signalservice__Envelope *e)
 	}
 }
 
-/**
- * Callback for a secure random number generator.
- * This function shall fill the provided buffer with random bytes.
- *
- * @param data pointer to the output buffer
- * @param len size of the output buffer
- * @return 0 on success, negative on failure
- */
-static int cry_random_func(uint8_t *data, size_t len, void *user_data)
+static void print_data_message(Signalservice__DataMessage *e)
 {
-	gcry_randomize(data, len, GCRY_STRONG_RANDOM);
-	return 0;
-	(void)user_data;
-}
-
-/**
- * Callback for an HMAC-SHA256 implementation.
- * This function shall initialize an HMAC context with the provided key.
- *
- * @param hmac_context private HMAC context pointer
- * @param key pointer to the key
- * @param key_len length of the key
- * @return 0 on success, negative on failure
- */
-static int cry_hmac_sha256_init_func(void **hmac_context, const uint8_t *key,
-                                     size_t key_len, void *user_data)
-{
-	gcry_md_hd_t hd;
-	gcry_error_t gr;
-	gr = gcry_md_open(&hd, GCRY_MD_SHA256, GCRY_MD_FLAG_HMAC);
-	if (gr)
-		FAIL(fail, "error on gcry_md_open: %x\n", gr);
-	gr = gcry_md_setkey(hd, key, key_len);
-	if (gr)
-		FAIL(mac_fail, "error on gcry_md_setkey: %x\n", gr);
-	*hmac_context = hd;
-	return 0;
-
-mac_fail:
-	gcry_md_close(hd);
-fail:
-	return -1;
-	(void)user_data;
-}
-
-/**
- * Callback for an HMAC-SHA256 implementation.
- * This function shall update the HMAC context with the provided data
- *
- * @param hmac_context private HMAC context pointer
- * @param data pointer to the data
- * @param data_len length of the data
- * @return 0 on success, negative on failure
- */
-static int cry_hmac_sha256_update_func(void *hmac_context, const uint8_t *data,
-                                       size_t data_len, void *user_data)
-{
-	gcry_md_hd_t hd = hmac_context;
-	gcry_md_write(hd, data, data_len);
-	return 0;
-	(void)user_data;
-}
-
-/**
- * Callback for an HMAC-SHA256 implementation.
- * This function shall finalize an HMAC calculation and populate the output
- * buffer with the result.
- *
- * @param hmac_context private HMAC context pointer
- * @param output buffer to be allocated and populated with the result
- * @return 0 on success, negative on failure
- */
-static int cry_hmac_sha256_final_func(void *hmac_context,
-                                      signal_buffer **output, void *user_data)
-{
-	gcry_md_hd_t hd = hmac_context;
-	gcry_md_final(hd);
-	*output = signal_buffer_create(gcry_md_read(hd, GCRY_MD_SHA256),
-	                               gcry_md_get_algo_dlen(GCRY_MD_SHA256));
-	return 0;
-	(void)user_data;
-}
-
-/**
- * Callback for an HMAC-SHA256 implementation.
- * This function shall free the private context allocated in
- * hmac_sha256_init_func.
- *
- * @param hmac_context private HMAC context pointer
- */
-static void cry_hmac_sha256_cleanup_func(void *hmac_context, void *user_data)
-{
-	gcry_md_hd_t hd = hmac_context;
-	gcry_md_close(hd);
-	(void)user_data;
-}
-
-#if 0
-/**
- * Callback for a SHA512 message digest implementation.
- * This function shall initialize a digest context.
- *
- * @param digest_context private digest context pointer
- * @return 0 on success, negative on failure
- */
-int (*sha512_digest_init_func)(void **digest_context, void *user_data);
-
-/**
- * Callback for a SHA512 message digest implementation.
- * This function shall update the digest context with the provided data.
- *
- * @param digest_context private digest context pointer
- * @param data pointer to the data
- * @param data_len length of the data
- * @return 0 on success, negative on failure
- */
-int (*sha512_digest_update_func)(void *digest_context, const uint8_t *data, size_t data_len, void *user_data);
-
-/**
- * Callback for a SHA512 message digest implementation.
- * This function shall finalize the digest calculation, populate the
- * output buffer with the result, and prepare the context for reuse.
- *
- * @param digest_context private digest context pointer
- * @param output buffer to be allocated and populated with the result
- * @return 0 on success, negative on failure
- */
-int (*sha512_digest_final_func)(void *digest_context, signal_buffer **output, void *user_data);
-
-/**
- * Callback for a SHA512 message digest implementation.
- * This function shall free the private context allocated in
- * sha512_digest_init_func.
- *
- * @param digest_context private digest context pointer
- */
-void (*sha512_digest_cleanup_func)(void *digest_context, void *user_data);
-
-/**
- * Callback for an AES encryption implementation.
- *
- * @param output buffer to be allocated and populated with the ciphertext
- * @param cipher specific cipher variant to use, either SG_CIPHER_AES_CTR_NOPADDING or SG_CIPHER_AES_CBC_PKCS5
- * @param key the encryption key
- * @param key_len length of the encryption key
- * @param iv the initialization vector
- * @param iv_len length of the initialization vector
- * @param plaintext the plaintext to encrypt
- * @param plaintext_len length of the plaintext
- * @return 0 on success, negative on failure
- */
-int (*encrypt_func)(signal_buffer **output,
-        int cipher,
-        const uint8_t *key, size_t key_len,
-        const uint8_t *iv, size_t iv_len,
-        const uint8_t *plaintext, size_t plaintext_len,
-        void *user_data);
-#endif
-
-/**
- * Callback for an AES decryption implementation.
- *
- * @param output buffer to be allocated and populated with the plaintext
- * @param cipher specific cipher variant to use, either SG_CIPHER_AES_CTR_NOPADDING or SG_CIPHER_AES_CBC_PKCS5
- * @param key the encryption key
- * @param key_len length of the encryption key
- * @param iv the initialization vector
- * @param iv_len length of the initialization vector
- * @param ciphertext the ciphertext to decrypt
- * @param ciphertext_len length of the ciphertext
- * @return 0 on success, negative on failure
- */
-static int cry_decrypt_func(signal_buffer **output,
-                            int cipher,
-                            const uint8_t *key, size_t key_len,
-                            const uint8_t *iv, size_t iv_len,
-                            const uint8_t *ciphertext, size_t ciphertext_len,
-                            void *user_data)
-{
-	int algo, mode, padding;
-	switch (key_len) {
-	case 16: algo = GCRY_CIPHER_AES128; break;
-	case 24: algo = GCRY_CIPHER_AES192; break;
-	case 32: algo = GCRY_CIPHER_AES256; break;
-	default: FAIL(fail, "unsupported key_len: %zu\n", key_len);
+	if (e->body)
+		printf("  body: %s\n", e->body);
+	printf("  attachments: %zu\n", e->n_attachments);
+	if (e->group)
+		printf("  group info for group: %s\n", e->group->name);
+	if (e->has_flags)
+		printf("  flags: 0x%x\n", e->flags);
+	if (e->has_expiretimer)
+		printf("  expire timer: %ud\n", e->expiretimer);
+	if (e->has_profilekey) {
+		printf("  profile key:\n");
+		print_hex(stdout, e->profilekey.data, e->profilekey.len);
+		printf("\n");
 	}
-	switch (cipher) {
-	case SG_CIPHER_AES_CTR_NOPADDING:
-		mode = GCRY_CIPHER_MODE_CTR;
-		padding = 0;
-		break;
-	case SG_CIPHER_AES_CBC_PKCS5:
-		mode = GCRY_CIPHER_MODE_CBC;
-		padding = 1;
-		break;
-	default:
-		FAIL(fail, "unknown cipher: %d\n", cipher);
+	if (e->has_timestamp) {
+		char buf[32];
+		time_t t = e->timestamp / 1000;
+		ctime_r(&t, buf);
+		printf("  timestamp: %s", buf);
 	}
-
-	gcry_cipher_hd_t ci;
-	gcry_error_t gr;
-	gr = gcry_cipher_open(&ci, algo, mode, 0);
-	if (gr)
-		FAIL(fail, "error on gcry_cipher_open: %x\n", gr);
-	gr = gcry_cipher_setkey(ci, key, key_len);
-	if (gr)
-		FAIL(cipher_fail, "error on gcry_cipher_setkey: %x\n", gr);
-	if (mode == GCRY_CIPHER_MODE_CBC) {
-		gr = gcry_cipher_setiv(ci, iv, iv_len);
-		if (gr)
-			FAIL(cipher_fail, "error on gcry_cipher_setiv: %x\n", gr);
-	} else {
-		gr = gcry_cipher_setctr(ci, iv, iv_len);
-		if (gr)
-			FAIL(cipher_fail, "error on gcry_cipher_setctr: %x\n", gr);
-	}
-	gr = gcry_cipher_final(ci);
-	if (gr)
-		FAIL(cipher_fail, "error on gcry_cipher_final: %x\n", gr);
-
-	uint8_t *body = malloc(ciphertext_len);
-	gr = gcry_cipher_decrypt(ci, body, ciphertext_len, ciphertext, ciphertext_len);
-	if (gr)
-		FAIL(cipher_fail2, "error on gcry_cipher_decrypt: %x\n", gr);
-	gcry_cipher_close(ci);
-
-	/* remove PKCS5Padding */
-	size_t size = ciphertext_len;
-	if (padding) {
-		if (!size)
-			FAIL(fail, "size of decrypted envelope is zero\n");
-		unsigned n = body[size-1];
-		if (size < n)
-			FAIL(fail, "size of decrypted envelope is smaller than "
-			           "PKCS5Padding's value\n");
-		for (unsigned i=0; i<n; i++)
-			if (body[size-n+i] != n)
-				FAIL(fail,
-				     "PKCS5Padding of decrypted envelope is broken\n");
-		size -= n;
-	}
-	*output = signal_buffer_create(body, size);
-	free(body);
-	return 0;
-
-cipher_fail2:
-	free(body);
-cipher_fail:
-	gcry_cipher_close(ci);
-fail:
-	return -1;
-	(void)user_data;
+	if (e->quote)
+		printf("  has quote\n");
+	printf("  # contacts: %zu\n", e->n_contact);
+	printf("  # previews: %zu\n", e->n_preview);
+	if (e->sticker)
+		printf("  has sticker\n");
+	if (e->has_requiredprotocolversion)
+		printf("  required protocol version: %ud\n",
+		       e->requiredprotocolversion);
+	if (e->has_messagetimer)
+		printf("  message timer: %ud\n", e->messagetimer);
 }
 
-static struct signal_crypto_provider crypto_provider = {
-	.random_func              = cry_random_func,
-	.hmac_sha256_init_func    = cry_hmac_sha256_init_func,
-	.hmac_sha256_update_func  = cry_hmac_sha256_update_func,
-	.hmac_sha256_final_func   = cry_hmac_sha256_final_func,
-	.hmac_sha256_cleanup_func = cry_hmac_sha256_cleanup_func,
-	.decrypt_func             = cry_decrypt_func,
+struct ksignal_ctx {
+	struct json_store *js;
+	signal_context *ctx;
+	signal_protocol_store_context *psctx;
 };
-
-static uintmax_t read_varint(uint8_t **data_p)
-{
-	uint8_t *data = *data_p;
-	uintmax_t v = 0;
-	for (int b=0;; b += 7) {
-		v |= (*data & ~0x80) << b;
-		if (!(*data++ & 0x80))
-			break;
-	}
-	*data_p = data;
-	return v;
-}
-
-static size_t protobuf_entry_size(uint8_t *entry)
-{
-	uint8_t *data = entry;
-	switch (*data++ & 0x07) {
-	case 0: /* varint */
-		while (*data++ & 0x80);
-		break;
-	case 1: /* fixed64 */
-		data += 8;
-		break;
-	case 2: { /* length-delimited */
-		size_t n = read_varint(&data);
-		data += n;
-		break;
-	}
-	case 3:
-	case 4:
-		/* groups (deprecated) */
-		assert(0);
-	case 5:
-		/* fixed32 */
-		data += 4;
-		break;
-	}
-	return data - entry;
-}
 
 static int decrypt_callback(session_cipher *cipher, signal_buffer *plaintext,
                             void *decrypt_context)
 {
+	struct ksignal_ctx *ksc = decrypt_context;
+
 	printf("decrypted Content:\n");
 	print_hex(stdout, signal_buffer_data(plaintext), signal_buffer_len(plaintext));
 	printf("\n");
@@ -544,86 +147,131 @@ static int decrypt_callback(session_cipher *cipher, signal_buffer *plaintext,
 	c = signalservice__content__unpack(NULL, sz,
 	                                   signal_buffer_data(plaintext));
 	assert(c);
-	if (c->datamessage) {
-		Signalservice__DataMessage *e = c->datamessage;
-		if (e->body)
-			printf("  body: %s\n", e->body);
-		printf("  attachments: %zu\n", e->n_attachments);
-		if (e->group)
-			printf("  group info for group: %s\n", e->group->name);
-		if (e->has_flags)
-			printf("  flags: 0x%x\n", e->flags);
-		if (e->has_expiretimer)
-			printf("  expire timer: %ud\n", e->expiretimer);
-		if (e->has_profilekey) {
-			printf("  profile key:\n");
-			print_hex(stdout, e->profilekey.data, e->profilekey.len);
-			printf("\n");
-		}
-		if (e->has_timestamp) {
-			char buf[32];
-			time_t t = e->timestamp / 1000;
-			ctime_r(&t, buf);
-			printf("  timestamp: %s", buf);
-		}
-		if (e->quote)
-			printf("  has quote\n");
-		printf("  # contacts: %zu\n", e->n_contact);
-		printf("  # previews: %zu\n", e->n_preview);
-		if (e->sticker)
-			printf("  has sticker\n");
-		if (e->has_requiredprotocolversion)
-			printf("  required protocol version: %ud\n",
-			       e->requiredprotocolversion);
-		if (e->has_messagetimer)
-			printf("  message timer: %ud\n", e->messagetimer);
-	}
+	if (c->datamessage)
+		print_data_message(c->datamessage);
 	signalservice__content__free_unpacked(c, NULL);
 	return 0;
-	return -1; /* fail s.t. the session does not get updated */
 	(void)cipher;
-	(void)decrypt_context;
+	(void)ksc;
 }
 
-static void ctx_log(int level, const char *message, size_t len, void *user_data)
+static int delete_request_on_response(ws_s *ws, struct signal_response *r,
+                                      void *udata)
 {
-	printf("signal ctx, lvl %d: %.*s\n", level, (int)len, message);
-	(void)user_data;
-}
-
-static int ack_message_on_response(ws_s *ws, struct signal_response *r,
-                                   void *udata)
-{
-	printf("message deletion response line: %d %s\n", r->status, r->message);
+	printf("deletion request response line: %d %s\n", r->status, r->message);
 	return 0;
 	(void)ws;
 	(void)udata;
 }
 
-static void ack_message(void *udata1, void *udata2)
+static void delete_request(void *udata1, void *udata2)
 {
 	ws_s *s = udata1;
 	char *path = udata2;
 	signal_ws_send_request(s, "DELETE", path,
-	                       .on_response = ack_message_on_response);
+	                       .on_response = delete_request_on_response);
 	free(path);
 }
 
-static void defer_ack_message(ws_s *s, const Signalservice__Envelope *e)
+static char * ack_message_path(const Signalservice__Envelope *e)
 {
-	char *path = e->serverguid
-	           ? ckprintf("/v1/messages/uuid/%s", e->serverguid)
-	           : ckprintf("/v1/messages/%s/%lu", e->source, e->timestamp);
-	fio_defer(ack_message, s, path);
+	return e->serverguid
+	       ? ckprintf("/v1/messages/uuid/%s", e->serverguid)
+	       : ckprintf("/v1/messages/%s/%lu", e->source, e->timestamp);
+}
+
+static int received_ciphertext(signal_buffer **plaintext, uint8_t *content,
+                               size_t size, struct ksignal_ctx *ksc,
+                               session_cipher *cipher)
+{
+	signal_message *msg;
+	int r = signal_message_deserialize(&msg, content, size, ksc->ctx);
+	printf("signal_message_deserialize -> %d\n", r);
+	if (r)
+		goto done;
+
+	r = session_cipher_decrypt_signal_message(cipher, msg, ksc, plaintext);
+	printf("session_cipher_decrypt_signal_message -> %d\n", r);
+done:
+	SIGNAL_UNREF(msg);
+	return r;
+}
+
+static int received_pkbundle(signal_buffer **plaintext, uint8_t *content,
+                             size_t size, struct ksignal_ctx *ksc,
+                             session_cipher *cipher)
+{
+	pre_key_signal_message *msg;
+	int r;
+	r = pre_key_signal_message_deserialize(&msg, content, size, ksc->ctx);
+	printf("pre_key_signal_message_deserialize -> %d\n", r);
+	if (r)
+		goto done;
+
+	r = session_cipher_decrypt_pre_key_signal_message(cipher, msg, ksc,
+	                                                  plaintext);
+	printf("session_cipher_decrypt_pre_key_signal_message -> %d\n", r);
+done:
+	SIGNAL_UNREF(msg);
+	return r;
+}
+
+static bool received_envelope(ws_s *ws, const Signalservice__Envelope *e,
+                              struct ksignal_ctx *ksc)
+{
+	typedef int received_envelope_handler(signal_buffer **plaintext,
+	                                      uint8_t *content, size_t size,
+	                                      struct ksignal_ctx *ksc,
+	                                      session_cipher *cipher);
+
+	static received_envelope_handler *const handlers[] = {
+		[CIPHERTEXT   ] = received_ciphertext,
+		[PREKEY_BUNDLE] = received_pkbundle,
+	};
+
+	printf("received envelope:\n");
+	print_envelope(e);
+
+	signal_protocol_address addr = {
+		.name = e->source,
+		.name_len = strlen(e->source),
+		.device_id = e->sourcedevice,
+	};
+
+	session_cipher *cipher;
+	int r = session_cipher_create(&cipher, ksc->psctx, &addr, ksc->ctx);
+	printf("session_cipher_create -> %d\n", r);
+	if (r)
+		return r;
+
+	session_cipher_set_decryption_callback(cipher, decrypt_callback);
+
+	signal_buffer *plaintext = NULL;
+	if (e->type < ARRAY_SIZE(handlers) && handlers[e->type]) {
+		r = handlers[e->type](&plaintext, e->content.data,
+		                      e->content.len, ksc, cipher);
+	} else {
+		printf("cannot handle envelope type %d!\n", e->type);
+		r = SG_ERR_UNKNOWN;
+	}
+
+	if (!r || r == SG_ERR_DUPLICATE_MESSAGE) {
+		fio_defer(delete_request, ws, ack_message_path(e));
+		r = 0;
+	}
+
+	signal_buffer_free(plaintext);
+	session_cipher_free(cipher);
+	return r == 0;
 }
 
 static int handle_request(ws_s *ws, char *verb, char *path, uint64_t *id,
                           size_t n_headers, char **headers,
-                          size_t size, uint8_t *body,
-                          void *udata)
+                          size_t size, uint8_t *body, void *udata)
 {
-	struct json_store *js = udata;
+	struct ksignal_ctx *ksc = udata;
 	bool is_enc = is_request_signal_key_encrypted(n_headers, headers);
+	int r = 0;
 
 	if (!strcmp(verb, "PUT") && !strcmp(path, "/api/v1/message")) {
 		/* new message received :) */
@@ -632,7 +280,8 @@ static int handle_request(ws_s *ws, char *verb, char *path, uint64_t *id,
 		printf("\n");*/
 		size_t sg_key_b64_len;
 		const char *sg_key_b64 =
-			json_store_get_signaling_key_base64(js, &sg_key_b64_len);
+			json_store_get_signaling_key_base64(ksc->js,
+			                                    &sg_key_b64_len);
 		if (is_enc && !decrypt_envelope(&body, &size,
 		                                sg_key_b64, sg_key_b64_len)) {
 			fprintf(stderr, "error decrypting envelope\n");
@@ -642,71 +291,12 @@ static int handle_request(ws_s *ws, char *verb, char *path, uint64_t *id,
 		e = signalservice__envelope__unpack(NULL, size, body);
 		if (!e) {
 			fprintf(stderr, "error decoding envelope protobuf\n");
-			return -1;
+			return -2;
 		}
-		printf("received envelope:\n");
-		print_envelope(e);
-		signal_protocol_address addr = {
-			.name = e->source,
-			.name_len = strlen(e->source),
-			.device_id = e->sourcedevice,
-		};
-
-		signal_context *ctx;
-		int r = signal_context_create(&ctx, NULL);
-		printf("signal_context_create -> %d\n", r);
-
-		signal_context_set_crypto_provider(ctx, &crypto_provider);
-		signal_context_set_log_function(ctx, ctx_log);
-
-		signal_protocol_store_context *psctx;
-		r = signal_protocol_store_context_create(&psctx, ctx);
-		printf("signal_protocol_store_context_create -> %d\n", r);
-
-		protocol_store_init(psctx, js);
-
-		session_builder *sb;
-		r = session_builder_create(&sb, psctx, &addr, ctx);
-		printf("session_builder_create -> %d\n", r);
-
-		session_cipher *cipher;
-		r = session_cipher_create(&cipher, psctx, &addr, ctx);
-		printf("session_cipher_create -> %d\n", r);
-
-		session_cipher_set_decryption_callback(cipher, decrypt_callback);
-
-		signal_buffer *plaintext = NULL;
-		if (e->type == SIGNALSERVICE__ENVELOPE__TYPE__PREKEY_BUNDLE) {
-			pre_key_signal_message *msg;
-			pre_key_signal_message_deserialize(&msg, e->content.data, e->content.len, ctx);
-			printf("pre_key_signal_message_deserialize -> %d\n", r);
-
-			session_cipher_decrypt_pre_key_signal_message(cipher, msg, NULL, &plaintext);
-			printf("session_cipher_decrypt_pre_key_signal_message -> %d\n", r);
-
-			SIGNAL_UNREF(msg);
-		} else if (e->type == SIGNALSERVICE__ENVELOPE__TYPE__CIPHERTEXT) {
-			signal_message *msg;
-			r = signal_message_deserialize(&msg, e->content.data, e->content.len, ctx);
-			printf("signal_message_deserialize -> %d\n", r);
-
-			r = session_cipher_decrypt_signal_message(cipher, msg, NULL, &plaintext);
-			printf("session_cipher_decrypt_signal_message -> %d\n", r);
-
-			SIGNAL_UNREF(msg);
-		}
-		if (!r || r == SG_ERR_DUPLICATE_MESSAGE)
-			defer_ack_message(ws, e);
-
-		signal_buffer_free(plaintext);
-		session_cipher_free(cipher);
-		session_builder_free(sb);
-		signal_protocol_store_context_destroy(psctx);
-		signal_context_destroy(ctx);
-
+		r = received_envelope(ws, e, ksc) ? 0 : -3;
 		signalservice__envelope__free_unpacked(e, NULL);
 	}
-	return 0;
+	return r;
 	(void)id;
 }
 
@@ -729,7 +319,6 @@ static void handle_new_uuid(char *uuid, void *udata)
 
 static int recv_get_profile(ws_s *ws, struct signal_response *r, void *udata)
 {
-	struct kjson_value *cfg = udata;
 	fprintf(stderr, "recv get profile: %u %s: ",
 	        r->status, r->message);
 
@@ -762,28 +351,26 @@ static int recv_get_profile(ws_s *ws, struct signal_response *r, void *udata)
 	kjson_value_fini(&p);
 
 	return 0;
-	(void)cfg;
+	(void)udata;
 	(void)ws;
 }
 
 static int recv_get_pre_key(ws_s *ws, struct signal_response *r, void *udata)
 {
-	struct kjson_value *cfg = udata;
 	fprintf(stderr, "recv get pre key: %u %s: %.*s\n",
 	        r->status, r->message, (int)r->body.len, r->body.data);
 	return 0;
-	(void)cfg;
+	(void)udata;
 	(void)ws;
 }
 
 static int recv_get_cert_delivery(ws_s *ws, struct signal_response *r,
                                   void *udata)
 {
-	struct kjson_value *cfg = udata;
 	fprintf(stderr, "recv get certificate delivery: %u %s: %.*s\n",
 	        r->status, r->message, (int)r->body.len, r->body.data);
 	return 0;
-	(void)cfg;
+	(void)udata;
 	(void)ws;
 }
 
@@ -803,6 +390,61 @@ static void send_get_profile(ws_s *s, void *udata)
 	(void)s;
 	(void)udata;
 #endif
+}
+
+static void ctx_log(int level, const char *message, size_t len, void *user_data)
+{
+	printf("signal ctx, lvl %d: %.*s\n", level, (int)len, message);
+	(void)user_data;
+}
+
+static bool ksignal_ctx_init(struct ksignal_ctx *ctx, struct json_store *js)
+{
+	signal_context *sgctx;
+	int r = signal_context_create(&sgctx, NULL);
+	printf("signal_context_create -> %d\n", r);
+	if (r)
+		return false;
+
+	signal_context_set_crypto_provider(sgctx, &crypto_provider);
+	signal_context_set_log_function(sgctx, ctx_log);
+
+	signal_protocol_store_context *psctx;
+	r = signal_protocol_store_context_create(&psctx, sgctx);
+	if (r) {
+		printf("signal_protocol_store_context_create -> %d\n", r);
+		signal_context_destroy(sgctx);
+		return false;
+	}
+
+	protocol_store_init(psctx, js);
+
+	ctx->js = js;
+	ctx->ctx = sgctx;
+	ctx->psctx = psctx;
+
+	return true;
+}
+
+static int ksignal_ctx_fini(struct ksignal_ctx *ksc)
+{
+	signal_protocol_store_context_destroy(ksc->psctx);
+	signal_context_destroy(ksc->ctx);
+
+	int r = json_store_save(ksc->js);
+	printf("json_store_save returned %d\n", r);
+	if (!r) {
+		r = json_store_load(ksc->js);
+		printf("json_store_load returned %d\n", r);
+		r = !r;
+	}
+	if (!r) {
+		r = json_store_save(ksc->js);
+		printf("json_store_save returned %d\n", r);
+	}
+	json_store_destroy(ksc->js);
+
+	return r;
 }
 
 #ifndef DEFAULT_CLI_CONFIG
@@ -838,9 +480,16 @@ int main(int argc, char **argv)
 		return 1;
 	}
 
+	int r = 0;
+	struct ksignal_ctx ksc;
+	if (!ksignal_ctx_init(&ksc, js)) {
+		fprintf(stderr, "error init'ing ksignal_ctx\n");
+		r = 1;
+		goto end;
+	}
+
 	const char *number = json_store_get_username(js);
 	const char *password = json_store_get_password_base64(js);
-	int r = 0;
 	char *url = NULL;
 	if (!number) {
 		fprintf(stderr, "no username, performing a device link\n");
@@ -858,7 +507,7 @@ int main(int argc, char **argv)
 			.on_open = send_get_profile,
 			.handle_request = handle_request,
 			.handle_response = NULL,
-			.udata = js,
+			.udata = &ksc,
 			.on_close = on_close_do_stop,
 		);
 	} else {
@@ -869,17 +518,7 @@ int main(int argc, char **argv)
 	fio_start(.threads=1);
 	free(url);
 
-	r = json_store_save(js);
-	printf("json_store_save returned %d\n", r);
-	if (!r) {
-		r = json_store_load(js);
-		printf("json_store_load returned %d\n", r);
-		r = !r;
-	}
-	if (!r) {
-		r = json_store_save(js);
-		printf("json_store_save returned %d\n", r);
-	}
-	json_store_destroy(js);
+end:
+	r = ksignal_ctx_fini(&ksc);
 	return 0;
 }
