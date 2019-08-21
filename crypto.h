@@ -18,4 +18,6 @@ size_t pkcs5_padded_size(size_t size);
 void   pkcs5_pad(uint8_t *body, size_t size);
 bool   pkcs5_unpad(const uint8_t *restrict body, size_t *restrict size);
 
+bool one_and_zeroes_unpad(const uint8_t *restrict body, size_t *restrict size);
+
 #endif

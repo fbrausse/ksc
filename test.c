@@ -133,20 +133,25 @@ static int decrypt_callback(session_cipher *cipher, signal_buffer *plaintext,
                             void *decrypt_context)
 {
 	struct ksignal_ctx *ksc = decrypt_context;
-
+	uint8_t *text = signal_buffer_data(plaintext);
+	size_t size = signal_buffer_len(plaintext);
+	/*
 	printf("decrypted Content:\n");
-	print_hex(stdout, signal_buffer_data(plaintext), signal_buffer_len(plaintext));
-	printf("\n");
-	/* manually "decode" protobuf in order to determine length of padded
-	 * Content message (it just contains one entry, not more) */
-	size_t sz = protobuf_entry_size(signal_buffer_data(plaintext));
-	printf("decrypted Content (len: %zu):\n", sz);
-	print_hex(stdout, signal_buffer_data(plaintext), sz);
+	print_hex(stdout, text, size);
+	printf("\n");*/
+	if (!one_and_zeroes_unpad(text, &size)) {
+		printf("ERROR: failed to one-and-zeroes-unpad!\n");
+		return -1;
+	}
+	printf("decrypted Content (len: %zu):\n", size);
+	print_hex(stdout, text, size);
 	printf("\n");
 	Signalservice__Content *c;
-	c = signalservice__content__unpack(NULL, sz,
-	                                   signal_buffer_data(plaintext));
-	assert(c);
+	c = signalservice__content__unpack(NULL, size, text);
+	if (!c) {
+		printf("ERROR: decoding decrypted message into Content\n");
+		return -1;
+	}
 	if (c->datamessage)
 		print_data_message(c->datamessage);
 	signalservice__content__free_unpacked(c, NULL);

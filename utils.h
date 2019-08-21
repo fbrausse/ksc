@@ -40,6 +40,4 @@ size_t base64_decode_size(const char *src, size_t len);
 char * ckprintf(const char *fmt, ...) __attribute__((format(printf,1,2)));
 void print_hex(FILE *f, const uint8_t *buf, size_t size);
 
-size_t protobuf_entry_size(uint8_t *entry);
-
 #endif

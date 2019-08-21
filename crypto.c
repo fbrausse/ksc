@@ -237,3 +237,22 @@ bool pkcs5_unpad(const uint8_t *restrict body, size_t *restrict size)
 	*size -= n;
 	return true;
 }
+
+bool one_and_zeroes_unpad(const uint8_t *restrict body, size_t *restrict size)
+{
+	const uint8_t *restrict begin_pad;
+#ifdef _GNU_SOURCE
+	begin_pad = memrchr(body, 0x80, *size);
+	if (!begin_pad)
+		return false;
+#else
+	if (!*size)
+		return false;
+	begin_pad = body + *size - 1;
+	for (; body < begin_pad && !*begin_pad; begin_pad--);
+	if (*begin_pad != 0x80)
+		return false;
+#endif
+	*size = begin_pad - body;
+	return true;
+}
