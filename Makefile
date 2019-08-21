@@ -54,6 +54,7 @@ OBJS = \
 	provisioning.o \
 	ksignal-ws.o \
 	utils.o \
+	ksc-ws.o \
 	crypto.o \
 	json-store.o \
 	$(CRYPT_OBJS) \

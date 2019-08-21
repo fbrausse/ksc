@@ -8,6 +8,8 @@
 
 #include <protobuf-c/protobuf-c.h>	/* ProtobufCMessage */
 
+const char BASE_URL[] = "wss://textsecure-service.whispersystems.org:443";
+
 static int signal_ws_send(ws_s *s, ProtobufCMessage *request_or_response)
 {
 	Signalservice__WebSocketMessage ws_msg =
@@ -185,9 +187,11 @@ static void _on_ws_request(ws_s *s,
 		                      request->has_body ? request->body.len : 0,
 		                      request->has_body ? request->body.data : NULL,
 		                      h->udata);
-	assert(r >= 0);
 	if (r > 0)
 		signal_ws_send_response(s, 200, "OK",
+		                        request->has_id ? &request->id : NULL);
+	else if (r < 0)
+		signal_ws_send_response(s, 400, "Unknown",
 		                        request->has_id ? &request->id : NULL);
 }
 
@@ -325,6 +329,10 @@ static void _on_websocket_http_connected(http_s *h) {
                     "address, assuming root!");
     h->path = fiobj_str_new("/", 1);
   }
+#ifdef SIGNAL_USER_AGENT
+	fio_hash_set(h->headers, fiobj_str_new("X-Signal-Agent: " SIGNAL_USER_AGENT,
+	                                       sizeof("X-Signal-Agent: " SIGNAL_USER_AGENT)-1));
+#endif
   int r = (http_upgrade2ws)(h, *s);
   fprintf(stderr, "http_upgrade2ws: %d\n", r);
   free(s);

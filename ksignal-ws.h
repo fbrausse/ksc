@@ -10,6 +10,8 @@
 
 #define KSIGNAL_UNKNOWN_WS_PROTOBUF_ERR	(-0x73001)
 
+extern const char BASE_URL[];
+
 struct signal_ws_handler {
 	void (*on_open)(ws_s *s, void *udata);
 	void (*on_ready)(ws_s *s, void *udata);
