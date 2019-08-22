@@ -34,39 +34,94 @@ static const struct ksc_log_context log_ctx = {
 
 struct json_store {
 	struct kjson_value cfg;
-	char *data;
-	size_t data_cap;
-	size_t data_sz;
 	int fd;
 	char *path;
 	struct ksc_log *log;
 };
 
-static char * json_store_alloc(struct json_store *js, size_t n)
+struct buffer {
+	char *data;
+	size_t data_cap;
+	size_t data_sz;
+};
+
+static char * buffer_alloc(struct buffer *buf, size_t n)
 {
-	size_t sz = js->data_sz + n;
-	if (sz > js->data_cap) {
-		size_t new_cap = MAX(sz, 2 * js->data_cap);
-		void *p = realloc(js->data, new_cap);
+	size_t sz = buf->data_sz + n;
+	if (sz > buf->data_cap) {
+		size_t new_cap = MAX(sz, 2 * buf->data_cap);
+		void *p = realloc(buf->data, new_cap);
 		if (!p)
 			return NULL;
-		js->data_cap = new_cap;
-		js->data = p;
+		buf->data_cap = new_cap;
+		buf->data = p;
 	}
-	char *r = js->data + js->data_sz;
-	js->data_sz += n;
+	char *r = buf->data + buf->data_sz;
+	buf->data_sz += n;
 	return r;
+}
+
+static void kjson_value_strdup(struct kjson_value *v)
+{
+	switch (v->type) {
+	case KJSON_VALUE_NULL:
+	case KJSON_VALUE_BOOLEAN:
+	case KJSON_VALUE_NUMBER_INTEGER:
+	case KJSON_VALUE_NUMBER_DOUBLE:
+		break;
+	case KJSON_VALUE_STRING:
+		v->s.begin = memdup(v->s.begin, v->s.len + 1);
+		break;
+	case KJSON_VALUE_ARRAY:
+		for (size_t i=0; i<v->a.n; i++)
+			kjson_value_strdup(&v->a.data[i]);
+		break;
+	case KJSON_VALUE_OBJECT:
+		for (size_t i=0; i<v->o.n; i++) {
+			v->o.data[i].key.begin = memdup(v->o.data[i].key.begin,
+			                                v->o.data[i].key.len+1);
+			kjson_value_strdup(&v->o.data[i].value);
+		}
+		break;
+	}
+}
+
+static void json_value_fini(struct kjson_value *v)
+{
+	switch (v->type) {
+	case KJSON_VALUE_NULL:
+	case KJSON_VALUE_BOOLEAN:
+	case KJSON_VALUE_NUMBER_INTEGER:
+	case KJSON_VALUE_NUMBER_DOUBLE:
+		break;
+	case KJSON_VALUE_STRING:
+		free(v->s.begin);
+		break;
+	case KJSON_VALUE_ARRAY:
+		for (size_t i=0; i<v->a.n; i++)
+			json_value_fini(&v->a.data[i]);
+		free(v->a.data);
+		break;
+	case KJSON_VALUE_OBJECT:
+		for (size_t i=0; i<v->o.n; i++) {
+			free(v->o.data[i].key.begin);
+			json_value_fini(&v->o.data[i].value);
+		}
+		free(v->o.data);
+		break;
+	}
 }
 
 bool json_store_load(struct json_store *js)
 {
-	js->data_sz = 0;
 	static char buf[BUFSIZE];
 	if (lseek(js->fd, 0, SEEK_SET) == (off_t)-1)
 		return false;
 	errno = 0;
+	struct buffer bf;
+	memset(&bf, 0, sizeof(bf));
 	for (ssize_t rd; (rd = read(js->fd, buf, sizeof(buf))) > 0;) {
-		char *data = json_store_alloc(js, rd);
+		char *data = buffer_alloc(&bf, rd);
 		if (!data)
 			break;
 		memcpy(data, buf, rd);
@@ -75,7 +130,7 @@ bool json_store_load(struct json_store *js)
 		return false;
 	kjson_value_fini(&js->cfg);
 	js->cfg.type = KJSON_VALUE_NULL;
-	bool r = kjson_parse(&(struct kjson_parser){ js->data }, &js->cfg);
+	bool r = kjson_parse(&(struct kjson_parser){ bf.data }, &js->cfg);
 	if (!r)
 		assert(js->cfg.type == KJSON_VALUE_NULL);
 	else {
@@ -145,13 +200,14 @@ bool json_store_load(struct json_store *js)
 		if (modified)
 			r = json_store_save(js) < 0 ? false : true;
 	}
+	kjson_value_strdup(&js->cfg);
+	free(bf.data);
 	return r;
 }
 
 void json_store_destroy(struct json_store *js)
 {
-	kjson_value_fini(&js->cfg);
-	free(js->data);
+	json_value_fini(&js->cfg);
 	free(js->path);
 	close(js->fd); /* also releases lockf(3p) lock */
 	free(js);
@@ -323,8 +379,8 @@ static int sess_load_session_func(signal_buffer **record,
                                   const signal_protocol_address *address,
                                   void *user_data)
 {
-	KSC_DEBUG(NOTE, "in %s()\n", __FUNCTION__);
 	struct json_store *js = user_data;
+	KSC_DEBUGL(DEBUG, js->log, "in %s()\n", __FUNCTION__);
 	struct kjson_value *st = sess_store(js);
 	struct kjson_value *v = find_by_address(st, address);
 	if (!v)
@@ -339,8 +395,8 @@ static int sess_get_sub_device_sessions_func(signal_int_list **sessions,
                                              const char *name, size_t name_len,
                                              void *user_data)
 {
-	KSC_DEBUG(NOTE, "in %s()\n", __FUNCTION__);
 	struct json_store *js = user_data;
+	KSC_DEBUGL(DEBUG, js->log, "in %s()\n", __FUNCTION__);
 	struct kjson_value *st = sess_store(js);
 	assert(st->type == KJSON_VALUE_ARRAY);
 	signal_int_list *r = signal_int_list_alloc();
@@ -378,7 +434,7 @@ static int array_handle_store_result(int r, struct kjson_array *tgt,
 	return r;
 }
 
-static struct kjson_value kjson_value_dup(struct kjson_value *v)
+static struct kjson_value json_value_dup(struct kjson_value *v)
 {
 	struct kjson_value r = *v;
 	switch (r.type) {
@@ -386,17 +442,24 @@ static struct kjson_value kjson_value_dup(struct kjson_value *v)
 	case KJSON_VALUE_BOOLEAN:
 	case KJSON_VALUE_NUMBER_INTEGER:
 	case KJSON_VALUE_NUMBER_DOUBLE:
+		break;
 	case KJSON_VALUE_STRING:
+		r.s.begin = memcpy(malloc(r.s.len + 1), r.s.begin, r.s.len);
+		r.s.begin[r.s.len] = '\0';
 		break;
 	case KJSON_VALUE_ARRAY:
 		r.a.data = malloc(sizeof(*r.a.data) * r.a.n);
 		for (size_t i=0; i<r.a.n; i++)
-			r.a.data[i] = kjson_value_dup(&v->a.data[i]);
+			r.a.data[i] = json_value_dup(&v->a.data[i]);
 		break;
 	case KJSON_VALUE_OBJECT:
 		r.o.data = malloc(sizeof(*r.o.data) * r.o.n);
-		for (size_t i=0; i<r.o.n; i++)
-			r.o.data[i].value = kjson_value_dup(&v->o.data[i].value);
+		for (size_t i=0; i<r.o.n; i++) {
+			struct kjson_string *s = &r.o.data[i].key;
+			s->begin = memcpy(malloc(s->len + 1), s->begin, s->len);
+			s->begin[s->len] = '\0';
+			r.o.data[i].value = json_value_dup(&v->o.data[i].value);
+		}
 		break;
 	}
 	return r;
@@ -407,14 +470,15 @@ static int sess_store_session_func(const signal_protocol_address *address,
                                    uint8_t *user_record, size_t user_record_len,
                                    void *user_data)
 {
-	KSC_DEBUG(NOTE, "in %s()\n", __FUNCTION__);
 	struct json_store *js = user_data;
+	KSC_DEBUGL(DEBUG, js->log, "in %s()\n", __FUNCTION__);
 	struct kjson_value *st = sess_store(js);
-	char *record_enc = json_store_alloc(js, (record_len + 2) / 3 * 4);
+	char *record_enc = malloc((record_len + 2) / 3 * 4 + 1);
 	assert(record_enc);
 	ssize_t n = base64_encode(record_enc, record, record_len);
 	assert(n >= 0);
 	assert((size_t)n == (record_len + 2) / 3 * 4);
+	record_enc[n] = '\0';
 	struct kjson_string record_str = { record_enc, n };
 	struct kjson_value *v = find_by_address(st, address);
 	int r;
@@ -426,6 +490,10 @@ static int sess_store_session_func(const signal_protocol_address *address,
 		r = json_store_save(js);
 		if (r < 0)
 			s->s = org;
+		else {
+			free(org.begin);
+			record_enc = NULL;
+		}
 		goto done;
 	}
 	struct kjson_object_entry entries[] = {
@@ -446,14 +514,15 @@ static int sess_store_session_func(const signal_protocol_address *address,
 		.type = KJSON_VALUE_OBJECT,
 		.o = { .data = entries, .n = ARRAY_SIZE(entries), },
 	};
-	struct kjson_value e = kjson_value_dup(&entry);
+	struct kjson_value e = json_value_dup(&entry);
 	(kjson_array_push_back)(&st->a, e);
 	r = json_store_save(js);
 	if (r < 0) {
-		kjson_value_fini(&e);
+		json_value_fini(&e);
 		st->a.n--;
 	}
 done:
+	free(record_enc);
 	return r;
 	(void)user_record, (void)user_record_len;
 }
@@ -461,8 +530,8 @@ done:
 static int sess_contains_session_func(const signal_protocol_address *address,
                                       void *user_data)
 {
-	KSC_DEBUG(NOTE, "in %s()\n", __FUNCTION__);
 	struct json_store *js = user_data;
+	KSC_DEBUGL(DEBUG, js->log, "in %s()\n", __FUNCTION__);
 	struct kjson_value *st = sess_store(js);
 	return find_by_address(st, address) ? 1 : 0;
 }
@@ -470,8 +539,8 @@ static int sess_contains_session_func(const signal_protocol_address *address,
 static int sess_delete_session_func(const signal_protocol_address *address,
                                     void *user_data)
 {
-	KSC_DEBUG(NOTE, "in %s()\n", __FUNCTION__);
 	struct json_store *js = user_data;
+	KSC_DEBUGL(DEBUG, js->log, "in %s()\n", __FUNCTION__);
 	struct kjson_value *st = sess_store(js);
 	struct kjson_value *v = find_by_address(st, address);
 	if (!v)
@@ -484,8 +553,8 @@ static int sess_delete_session_func(const signal_protocol_address *address,
 static int sess_delete_all_sessions_func(const char *name, size_t name_len,
                                          void *user_data)
 {
-	KSC_DEBUG(NOTE, "in %s()\n", __FUNCTION__);
 	struct json_store *js = user_data;
+	KSC_DEBUGL(DEBUG, js->log, "in %s()\n", __FUNCTION__);
 	struct kjson_value *st = sess_store(js);
 	assert(!st || st->type == KJSON_VALUE_ARRAY);
 	int removed = 0;
@@ -508,8 +577,8 @@ static int sess_delete_all_sessions_func(const char *name, size_t name_len,
 
 static void sess_destroy_session_func(void *user_data)
 {
-	KSC_DEBUG(NOTE, "in %s()\n", __FUNCTION__);
 	struct json_store *js = user_data;
+	KSC_DEBUGL(DEBUG, js->log, "in %s()\n", __FUNCTION__);
 	(void)js;
 }
 
@@ -562,8 +631,8 @@ static struct kjson_value * prek_lookup(struct kjson_value *st,
 static int prek_load_pre_key(signal_buffer **record, uint32_t pre_key_id,
                              void *user_data)
 {
-	KSC_DEBUG(NOTE, "in %s()\n", __FUNCTION__);
 	struct json_store *js = user_data;
+	KSC_DEBUGL(DEBUG, js->log, "in %s()\n", __FUNCTION__);
 	struct kjson_value *st = prek_store(js);
 	struct kjson_value *v = prek_lookup(st, pre_key_id);
 	if (!v)
@@ -581,8 +650,8 @@ static int prek_load_pre_key(signal_buffer **record, uint32_t pre_key_id,
  */
 static int prek_contains_pre_key(uint32_t pre_key_id, void *user_data)
 {
-	KSC_DEBUG(NOTE, "in %s()\n", __FUNCTION__);
 	struct json_store *js = user_data;
+	KSC_DEBUGL(DEBUG, js->log, "in %s()\n", __FUNCTION__);
 	struct kjson_value *st = prek_store(js);
 	struct kjson_value *v = prek_lookup(st, pre_key_id);
 	return v ? 1 : 0;
@@ -599,16 +668,17 @@ static int prek_contains_pre_key(uint32_t pre_key_id, void *user_data)
 static int prek_store_pre_key(uint32_t pre_key_id, uint8_t *record,
                               size_t record_len, void *user_data)
 {
-	KSC_DEBUG(NOTE, "in %s()\n", __FUNCTION__);
 	struct json_store *js = user_data;
+	KSC_DEBUGL(DEBUG, js->log, "in %s()\n", __FUNCTION__);
 	struct kjson_value *st = prek_store(js);
 	if (prek_lookup(st, pre_key_id))
 		return SG_ERR_INVALID_KEY_ID; /* already exists */
-	char *record_enc = json_store_alloc(js, (record_len + 2) / 3 * 4);
+	char *record_enc = malloc((record_len + 2) / 3 * 4 + 1);
 	assert(record_enc);
 	ssize_t n = base64_encode(record_enc, record, record_len);
 	assert(n >= 0);
 	assert((size_t)n == (record_len + 2) / 3 * 4);
+	record_enc[n] = '\0';
 	struct kjson_object_entry entries[] = {
 		{ .key = { "id", 2 }, .value = {
 			.type = KJSON_VALUE_NUMBER_INTEGER,
@@ -619,13 +689,14 @@ static int prek_store_pre_key(uint32_t pre_key_id, uint8_t *record,
 			.s = { record_enc, n },
 		} },
 	};
-	(kjson_array_push_back)(&st->a, kjson_value_dup(&(struct kjson_value){
+	(kjson_array_push_back)(&st->a, json_value_dup(&(struct kjson_value){
 		.type = KJSON_VALUE_OBJECT,
 		.o = { .n = ARRAY_SIZE(entries), .data = entries },
 	}));
 	int r = json_store_save(js);
 	if (r < 0)
-		kjson_value_fini(st->a.data + --st->a.n);
+		json_value_fini(st->a.data + --st->a.n);
+	free(record_enc);
 	return r;
 }
 
@@ -637,8 +708,8 @@ static int prek_store_pre_key(uint32_t pre_key_id, uint8_t *record,
  */
 static int prek_remove_pre_key(uint32_t pre_key_id, void *user_data)
 {
-	KSC_DEBUG(NOTE, "in %s()\n", __FUNCTION__);
 	struct json_store *js = user_data;
+	KSC_DEBUGL(DEBUG, js->log, "in %s()\n", __FUNCTION__);
 	struct kjson_value *st = prek_store(js);
 	struct kjson_value *v = prek_lookup(st, pre_key_id);
 	if (!v)
@@ -650,8 +721,8 @@ static int prek_remove_pre_key(uint32_t pre_key_id, void *user_data)
 
 static void prek_destroy_func(void *user_data)
 {
-	KSC_DEBUG(NOTE, "in %s()\n", __FUNCTION__);
 	struct json_store *js = user_data;
+	KSC_DEBUGL(DEBUG, js->log, "in %s()\n", __FUNCTION__);
 	(void)js;
 }
 
@@ -704,8 +775,8 @@ static int sipk_load_signed_pre_key(signal_buffer **record,
                                     uint32_t signed_pre_key_id,
                                     void *user_data)
 {
-	KSC_DEBUG(NOTE, "in %s()\n", __FUNCTION__);
 	struct json_store *js = user_data;
+	KSC_DEBUGL(DEBUG, js->log, "in %s()\n", __FUNCTION__);
 	struct kjson_value *st = sipk_store(js);
 	struct kjson_value *v = sipk_lookup(st, signed_pre_key_id);
 	if (!v)
@@ -726,16 +797,17 @@ static int sipk_store_signed_pre_key(uint32_t signed_pre_key_id,
                                      uint8_t *record, size_t record_len,
                                      void *user_data)
 {
-	KSC_DEBUG(NOTE, "in %s()\n", __FUNCTION__);
 	struct json_store *js = user_data;
+	KSC_DEBUGL(DEBUG, js->log, "in %s()\n", __FUNCTION__);
 	struct kjson_value *st = sipk_store(js);
 	if (prek_lookup(st, signed_pre_key_id))
 		return SG_ERR_INVALID_KEY_ID; /* already exists */
-	char *record_enc = json_store_alloc(js, (record_len + 2) / 3 * 4);
+	char *record_enc = malloc((record_len + 2) / 3 * 4 + 1);
 	assert(record_enc);
 	ssize_t n = base64_encode(record_enc, record, record_len);
 	assert(n >= 0);
 	assert((size_t)n == (record_len + 2) / 3 * 4);
+	record_enc[n] = '\0';
 	struct kjson_object_entry entries[] = {
 		{ .key = { "id", 2 }, .value = {
 			.type = KJSON_VALUE_NUMBER_INTEGER,
@@ -746,13 +818,14 @@ static int sipk_store_signed_pre_key(uint32_t signed_pre_key_id,
 			.s = { record_enc, n },
 		} },
 	};
-	(kjson_array_push_back)(&st->a, kjson_value_dup(&(struct kjson_value){
+	(kjson_array_push_back)(&st->a, json_value_dup(&(struct kjson_value){
 		.type = KJSON_VALUE_OBJECT,
 		.o = { .n = ARRAY_SIZE(entries), .data = entries },
 	}));
 	int r = json_store_save(js);
 	if (r < 0)
-		kjson_value_fini(st->a.data + --st->a.n);
+		json_value_fini(st->a.data + --st->a.n);
+	free(record_enc);
 	return r;
 }
 
@@ -766,8 +839,8 @@ static int sipk_store_signed_pre_key(uint32_t signed_pre_key_id,
 static int sipk_contains_signed_pre_key(uint32_t signed_pre_key_id,
                                         void *user_data)
 {
-	KSC_DEBUG(NOTE, "in %s()\n", __FUNCTION__);
 	struct json_store *js = user_data;
+	KSC_DEBUGL(DEBUG, js->log, "in %s()\n", __FUNCTION__);
 	struct kjson_value *st = sipk_store(js);
 	struct kjson_value *v = sipk_lookup(st, signed_pre_key_id);
 	return v ? 1 : 0;
@@ -782,8 +855,8 @@ static int sipk_contains_signed_pre_key(uint32_t signed_pre_key_id,
 static int sipk_remove_signed_pre_key(uint32_t signed_pre_key_id,
                                       void *user_data)
 {
-	KSC_DEBUG(NOTE, "in %s()\n", __FUNCTION__);
 	struct json_store *js = user_data;
+	KSC_DEBUGL(DEBUG, js->log, "in %s()\n", __FUNCTION__);
 	struct kjson_value *st = sipk_store(js);
 	struct kjson_value *v = sipk_lookup(st, signed_pre_key_id);
 	if (!v)
@@ -799,8 +872,8 @@ static int sipk_remove_signed_pre_key(uint32_t signed_pre_key_id,
  */
 static void sipk_destroy_func(void *user_data)
 {
-	KSC_DEBUG(NOTE, "in %s()\n", __FUNCTION__);
 	struct json_store *js = user_data;
+	KSC_DEBUGL(DEBUG, js->log, "in %s()\n", __FUNCTION__);
 	(void)js;
 }
 
@@ -841,8 +914,8 @@ static int idk_get_identity_key_pair(signal_buffer **public_data,
                                      signal_buffer **private_data,
                                      void *user_data)
 {
-	KSC_DEBUG(NOTE, "in %s()\n", __FUNCTION__);
 	struct json_store *js = user_data;
+	KSC_DEBUGL(DEBUG, js->log, "in %s()\n", __FUNCTION__);
 	struct kjson_value *st = idk_store(js);
 	signal_buffer *pb_keys = NULL;
 	base64_to_signal_buffer(&pb_keys, kjson_get(st, "identityKey"));
@@ -873,8 +946,8 @@ static int idk_get_identity_key_pair(signal_buffer **public_data,
 static int idk_get_local_registration_id(void *user_data,
                                          uint32_t *registration_id)
 {
-	KSC_DEBUG(NOTE, "in %s()\n", __FUNCTION__);
 	struct json_store *js = user_data;
+	KSC_DEBUGL(DEBUG, js->log, "in %s()\n", __FUNCTION__);
 	struct kjson_value *st = idk_store(js);
 	struct kjson_value *v = kjson_get(st, "registrationId");
 	if (!v || v->type != KJSON_VALUE_NUMBER_INTEGER ||
@@ -922,21 +995,19 @@ struct kjson_value * idk_lookup_tk(struct kjson_value *st,
 static int idk_save_identity(const signal_protocol_address *address,
                              uint8_t *key_data, size_t key_len, void *user_data)
 {
-	KSC_DEBUG(NOTE, "in %s()\n", __FUNCTION__);
 	struct json_store *js = user_data;
+	KSC_DEBUGL(DEBUG, js->log, "in %s()\n", __FUNCTION__);
 	struct kjson_value *st = idk_store(js);
 	struct kjson_value *tk = kjson_get(st, "trustedKeys");
 	struct kjson_value *e = idk_lookup_tk(st, address);
 	if (!e) {
-		size_t len = address->name_len;
-		char *name = memcpy(json_store_alloc(js, len), address->name, len);
 		struct kjson_object_entry entries[] = {
 			{ .key = { "name", 4 }, .value = {
 				.type = KJSON_VALUE_STRING,
-				.s = { name, len },
+				.s = { (char *)address->name, address->name_len },
 			} },
 		};
-		e = (kjson_array_push_back)(&tk->a, kjson_value_dup(&(struct kjson_value){
+		e = (kjson_array_push_back)(&tk->a, json_value_dup(&(struct kjson_value){
 			.type = KJSON_VALUE_OBJECT,
 			.o = { .n = ARRAY_SIZE(entries), .data = entries },
 		}));
@@ -944,11 +1015,12 @@ static int idk_save_identity(const signal_protocol_address *address,
 	struct kjson_value *idk = kjson_get(e, "identityKey");
 	if (key_data) {
 		struct kjson_string record_str = { NULL, 0 };
-		char *record_enc = json_store_alloc(js, (key_len + 2) / 3 * 4);
+		char *record_enc = malloc((key_len + 2) / 3 * 4 + 1);
 		assert(record_enc);
 		ssize_t n = base64_encode(record_enc, key_data, key_len);
 		assert(n >= 0);
 		assert((size_t)n == (key_len + 2) / 3 * 4);
+		record_enc[n] = '\0';
 		record_str.begin = record_enc;
 		record_str.len = n;
 		if (idk) {
@@ -999,8 +1071,8 @@ static int idk_is_trusted_identity(const signal_protocol_address *address,
                                    uint8_t *key_data, size_t key_len,
                                    void *user_data)
 {
-	KSC_DEBUG(NOTE, "in %s()\n", __FUNCTION__);
 	struct json_store *js = user_data;
+	KSC_DEBUGL(DEBUG, js->log, "in %s()\n", __FUNCTION__);
 	struct kjson_value *st = idk_store(js);
 	struct kjson_value *e = idk_lookup_tk(st, address);
 	if (!e)
@@ -1022,8 +1094,8 @@ static int idk_is_trusted_identity(const signal_protocol_address *address,
  */
 static void idk_destroy_func(void *user_data)
 {
-	KSC_DEBUG(NOTE, "in %s()\n", __FUNCTION__);
 	struct json_store *js = user_data;
+	KSC_DEBUGL(DEBUG, js->log, "in %s()\n", __FUNCTION__);
 	(void)js;
 }
 

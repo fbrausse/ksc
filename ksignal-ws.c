@@ -259,7 +259,7 @@ static void _signal_ws_on_message(ws_s *ws, fio_str_info_s msg, uint8_t is_text)
 	Signalservice__WebSocketMessage *ws_msg =
 		signalservice__web_socket_message__unpack(NULL, msg.len,
 		                                          (uint8_t *)msg.data);
-	KSC_DEBUG(DEBUG, "%p\n", (void *)ws_msg);
+	LOG(DEBUG, "%p\n", (void *)ws_msg);
 	assert(ws_msg->has_type);
 	switch (ws_msg->type) {
 	case SIGNALSERVICE__WEB_SOCKET_MESSAGE__TYPE__REQUEST:
@@ -339,8 +339,8 @@ static void _signal_ws_on_ready(ws_s *s)
 
 static void _signal_ws_on_close(intptr_t uuid, void *udata)
 {
-	printf("signal_ws_close\n");
 	struct signal_ws_connect_args *h = udata;
+	LOG(DEBUG, "signal_ws_close\n");
 	if (h && h->on_close)
 		h->on_close(uuid, h->udata);
 	free(h);
@@ -348,30 +348,33 @@ static void _signal_ws_on_close(intptr_t uuid, void *udata)
 
 static void _on_websocket_http_connected(http_s *h) {
   websocket_settings_s *s = h->udata;
-  KSC_DEBUG(DEBUG, "on_websocket_http_connected\n");
+  struct signal_ws_connect_args *hh = s->udata;
+  LOGL(DEBUG, hh->log, "on_websocket_http_connected\n");
   h->udata = http_settings(h)->udata = NULL;
   if (!h->path) {
-    KSC_DEBUG(DEBUG, "(websocket client) path not specified in "
-                     "address, assuming root!");
+    LOGL(DEBUG, hh->log, "(websocket client) path not specified in "
+                         "address, assuming root!");
     h->path = fiobj_str_new("/", 1);
   }
 #ifdef SIGNAL_USER_AGENT
-	fio_hash_set(h->headers, fiobj_str_new("X-Signal-Agent: " SIGNAL_USER_AGENT,
-	                                       sizeof("X-Signal-Agent: " SIGNAL_USER_AGENT)-1));
+  fio_hash_set(h->headers, fiobj_str_new("X-Signal-Agent: " SIGNAL_USER_AGENT,
+                                         sizeof("X-Signal-Agent: " SIGNAL_USER_AGENT)-1));
 #endif
   int r = (http_upgrade2ws)(h, *s);
-  KSC_DEBUG(DEBUG, "http_upgrade2ws: %d\n", r);
+  LOGL(DEBUG, hh->log, "http_upgrade2ws: %d\n", r);
   free(s);
 }
 
 static void _on_websocket_http_connection_finished(http_settings_s *settings) {
   websocket_settings_s *s = settings->udata;
-  KSC_DEBUG(DEBUG, "on_websocket_http_connection_finished\n");
   if (s) {
+    struct signal_ws_connect_args *hh = s->udata;
+    LOGL(DEBUG, hh->log, "on_websocket_http_connection_finished\n");
     if (s->on_close)
       s->on_close(0, s->udata);
     free(s);
-  }
+  } else
+    KSC_DEBUG(DEBUG, "on_websocket_http_connection_finished\n");
 }
 
 fio_tls_s * signal_tls(const char *cert_path)

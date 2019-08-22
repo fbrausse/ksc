@@ -9,18 +9,30 @@
 #include <assert.h>
 #include <time.h>	/* ctime_r() */
 
-static void print_data_message(Signalservice__DataMessage *e)
+static const struct ksc_log_context log_ctx = {
+	.desc = "main",
+	.color = "1;97",
+};
+
+/* shortcuts */
+#define LOGL_(level,log,...)	KSC_LOG_(level, log, &log_ctx, __VA_ARGS__)
+#define LOGL(lvl,log,...)	KSC_LOG(lvl, log, &log_ctx, __VA_ARGS__)
+#define LOG_(level,...)		LOGL_(level, &ksc->log, __VA_ARGS__)
+#define LOG(lvl,...)		LOGL(lvl, &ksc->log, __VA_ARGS__)
+
+static void print_data_message(int fd, Signalservice__DataMessage *e)
 {
 	if (e->body)
-		printf("  body: %s\n", e->body);
-	printf("  attachments: %zu\n", e->n_attachments);
+		dprintf(fd, "  body: %s\n", e->body);
+	if (e->n_attachments)
+		dprintf(fd, "  attachments: %zu\n", e->n_attachments);
 	if (e->group) {
 		struct _Signalservice__GroupContext *g = e->group;
-		printf("  has group info:\n");
+		dprintf(fd, "  has group info:\n");
 		if (g->has_id) {
-			printf("    id: ");
-			print_hex(stdout, g->id.data, g->id.len);
-			printf("\n");
+			dprintf(fd, "    id: ");
+			ksc_dprint_hex(fd, g->id.data, g->id.len);
+			dprintf(fd, "\n");
 		}
 		if (g->has_type) {
 			char *type = NULL;
@@ -32,90 +44,93 @@ static void print_data_message(Signalservice__DataMessage *e)
 			case SIGNALSERVICE__GROUP_CONTEXT__TYPE__REQUEST_INFO: type = "request info"; break;
 			case _SIGNALSERVICE__GROUP_CONTEXT__TYPE_IS_INT_SIZE: break;
 			}
-			printf("    type: %s (%d)\n", type, g->type);
+			dprintf(fd, "    type: %s (%d)\n", type, g->type);
 		}
 		if (g->name)
-			printf("    name: %s\n", g->name);
+			dprintf(fd, "    name: %s\n", g->name);
 		for (size_t i=0; i<g->n_members; i++)
-			printf("    member: %s\n", g->members[i]);
+			dprintf(fd, "    member: %s\n", g->members[i]);
 		if (g->avatar)
-			printf("    has avatar\n");
+			dprintf(fd, "    has avatar\n");
 	}
 	if (e->has_flags)
-		printf("  flags: 0x%x\n", e->flags);
+		dprintf(fd, "  flags: 0x%x\n", e->flags);
 	if (e->has_expiretimer)
-		printf("  expire timer: %ud\n", e->expiretimer);
+		dprintf(fd, "  expire timer: %ud\n", e->expiretimer);
 	if (e->has_profilekey) {
-		printf("  profile key:\n");
-		print_hex(stdout, e->profilekey.data, e->profilekey.len);
-		printf("\n");
+		dprintf(fd, "  profile key:\n");
+		ksc_dprint_hex(fd, e->profilekey.data, e->profilekey.len);
+		dprintf(fd, "\n");
 	}
 	if (e->has_timestamp) {
 		char buf[32];
 		time_t t = e->timestamp / 1000;
 		ctime_r(&t, buf);
-		printf("  timestamp: %s", buf);
+		dprintf(fd, "  timestamp: %s", buf);
 	}
 	if (e->quote)
-		printf("  has quote\n");
-	printf("  # contacts: %zu\n", e->n_contact);
-	printf("  # previews: %zu\n", e->n_preview);
+		dprintf(fd, "  has quote\n");
+	if (e->n_contact)
+		dprintf(fd, "  # contacts: %zu\n", e->n_contact);
+	if (e->n_preview)
+		dprintf(fd, "  # previews: %zu\n", e->n_preview);
 	if (e->sticker)
-		printf("  has sticker\n");
+		dprintf(fd, "  has sticker\n");
 	if (e->has_requiredprotocolversion)
-		printf("  required protocol version: %ud\n",
-		       e->requiredprotocolversion);
+		dprintf(fd, "  required protocol version: %ud\n",
+		        e->requiredprotocolversion);
 	if (e->has_messagetimer)
-		printf("  message timer: %ud\n", e->messagetimer);
+		dprintf(fd, "  message timer: %ud\n", e->messagetimer);
 }
+
+struct ksc_ctx {
+	struct ksc_log log;
+};
 
 static void on_close_do_stop(intptr_t uuid, void *udata)
 {
-	printf("close, stopping\n");
+	struct ksc_ctx *ksc = udata;
+	LOG(INFO, "close, stopping\n");
 	fio_stop();
 	(void)uuid;
-	(void)udata;
 }
 
 static void handle_new_uuid(char *uuid, void *udata)
 {
-	printf("got new uuid: %s\n", uuid);
-	(void)uuid;
-	(void)udata;
+	struct ksc_ctx *ksc = udata;
+	LOG(INFO, "got new uuid: %s\n", uuid);
 }
-
-#define DIE(code,...) do { fprintf(stderr, __VA_ARGS__); exit(code); } while (0)
 
 static int recv_get_profile(ws_s *ws, struct signal_response *r, void *udata)
 {
-	fprintf(stderr, "recv get profile: %u %s: ",
-	        r->status, r->message);
+	struct ksc_ctx *ksc = udata;
+	LOG_(r->status == 200 ? KSC_LOG_INFO : KSC_LOG_ERROR,
+	     "recv get profile: %u %s: ", r->status, r->message);
 
 	if (r->status != 200) {
-		fprintf(stderr, "\n");
+		dprintf(ksc->log.fd, "\n");
 		return 0;
 	}
 
 	FIOBJ profile;
 	size_t parsed = fiobj_json2obj(&profile, r->body.data, r->body.len);
-	fprintf(stderr, "fio json parsed %zu of %zu",
-	        parsed, r->body.len);
+	LOG(INFO, "fio json parsed %zu of %zu", parsed, r->body.len);
 	if (parsed) {
 		FIOBJ str = fiobj_obj2json(profile, 1);
 		fio_str_info_s s = fiobj_obj2cstr(str);
-		fprintf(stderr, ": %.*s\n", (int)s.len, s.data);
+		dprintf(ksc->log.fd, ": %.*s\n", (int)s.len, s.data);
 		fiobj_free(str);
 		fiobj_free(profile);
 	} else
-		fprintf(stderr, ", failed\n");
+		dprintf(ksc->log.fd, ", failed\n");
 
-	fprintf(stderr, "recv get profile: ");
+	LOG(INFO, "recv get profile: ");
 	struct kjson_value p = KJSON_VALUE_INIT;
 	if (kjson_parse(&(struct kjson_parser){ r->body.data }, &p)) {
 		kjson_value_print(stderr, &p);
-		fprintf(stderr, "\n");
+		dprintf(ksc->log.fd, "\n");
 	} else
-		fprintf(stderr, "error parsing profile json: '%.*s'\n",
+		dprintf(ksc->log.fd, "error parsing profile json: '%.*s'\n",
 		        (int)r->body.len, r->body.data);
 	kjson_value_fini(&p);
 
@@ -126,26 +141,23 @@ static int recv_get_profile(ws_s *ws, struct signal_response *r, void *udata)
 
 static int recv_get_pre_key(ws_s *ws, struct signal_response *r, void *udata)
 {
-	fprintf(stderr, "recv get pre key: %u %s: %.*s\n",
-	        r->status, r->message, (int)r->body.len, r->body.data);
+	struct ksc_ctx *ksc = udata;
+	LOG(INFO, "recv get pre key: %u %s: %.*s\n",
+	          r->status, r->message, (int)r->body.len, r->body.data);
 	return 0;
-	(void)udata;
 	(void)ws;
 }
 
 static int recv_get_cert_delivery(ws_s *ws, struct signal_response *r,
                                   void *udata)
 {
-	fprintf(stderr, "recv get certificate delivery: %u %s: %.*s\n",
-	        r->status, r->message, (int)r->body.len, r->body.data);
+	struct ksc_ctx *ksc = udata;
+	LOG(INFO, "recv get certificate delivery: %u %s: %.*s\n",
+	          r->status, r->message, (int)r->body.len, r->body.data);
 	return 0;
-	(void)udata;
 	(void)ws;
 }
 
-static int recv_messages(ws_s *ws, struct signal_response *r,
-                                  void *udata)
-{
 #if 0
 Output is something like this:
 recv messages: 200 OK
@@ -166,58 +178,59 @@ recv messages: 200 OK
 }
 These should be ACK-ed as per fio_defer(delete_request) ...
 #endif
-	printf("recv messages: %d %s\n", r->status, r->message);
-	for (size_t i=0; i<r->n_headers; i++)
-		printf("  header: %s\n", r->headers[i]);
-	printf("  body: %.*s\n", (int)r->body.len, r->body.data);
+static int recv_messages(ws_s *ws, struct signal_response *r,
+                                  void *udata)
+{
+	struct ksc_ctx *ksc = udata;
+	LOG(INFO, "recv messages: %d %s\n", r->status, r->message);
+	if (ksc_log_prints(KSC_LOG_INFO, &ksc->log, &log_ctx)) {
+		for (size_t i=0; i<r->n_headers; i++)
+			dprintf(ksc->log.fd, "  header: %s\n", r->headers[i]);
+		dprintf(ksc->log.fd, "  body: %.*s\n",
+		        (int)r->body.len, r->body.data);
+	}
 	return 0;
 	(void)ws;
-	(void)udata;
 }
 
 static void send_get_profile(ws_s *s, void *udata)
 {
+	struct ksc_ctx *ksc = udata;
 #if 0 && defined(DEFAULT_GET_PROFILE_NUMBER)
 	// works
 	signal_ws_send_request(s, "GET",
 	                       "/v1/profile/" DEFAULT_GET_PROFILE_NUMBER,
-	                       .on_response = recv_get_profile, .udata = udata);
+	                       .on_response = recv_get_profile, .udata = ksc);
 	// fails
 	signal_ws_send_request(s, "GET",
 	                       "/v2/keys/" DEFAULT_GET_PROFILE_NUMBER "/*",
-	                       .on_response = recv_get_pre_key, .udata = udata);
+	                       .on_response = recv_get_pre_key, .udata = ksc);
 	// fails
 	signal_ws_send_request(s, "GET", "/v1/certificate/delivery",
 	                       .on_response = recv_get_cert_delivery,
-	                       .udata = udata);
-#else
+	                       .udata = ksc);
+#elif 1
 	signal_ws_send_request(s, "GET", "/v1/messages/",
-	                       .on_response = recv_messages);
+	                       .on_response = recv_messages,
+	                       .udata = ksc);
+#else
+	(void)ksc;
 	(void)s;
-	(void)udata;
 #endif
 }
 
 static bool on_content(ws_s *ws, const Signalservice__Envelope *e,
                        const Signalservice__Content *c, void *udata)
 {
-	printf("received content:\n");
-	if (c->datamessage)
-		print_data_message(c->datamessage);
+	struct ksc_ctx *ksc = udata;
+	LOG(INFO, "received content:\n");
+	if (c->datamessage && ksc_log_prints(KSC_LOG_INFO, &ksc->log, &log_ctx))
+		print_data_message(ksc->log.fd, c->datamessage);
 	return true;
 	(void)ws;
 	(void)e;
-	(void)udata;
 }
 
-
-struct ksc_ctx {
-	struct ksc_log log;
-};
-
-#ifndef DEFAULT_CLI_CONFIG
-# define DEFAULT_CLI_CONFIG	NULL
-#endif
 
 static bool parse_v_lvl(const char *lvl, enum ksc_log_lvl *res)
 {
@@ -249,6 +262,12 @@ static bool parse_v(char *arg, struct ksc_log *log)
 	return true;
 }
 
+#ifndef DEFAULT_CLI_CONFIG
+# define DEFAULT_CLI_CONFIG	NULL
+#endif
+
+#define DIE(code,...) do { fprintf(stderr, __VA_ARGS__); exit(code); } while (0)
+
 int main(int argc, char **argv)
 {
 	struct ksc_log log = KSC_DEFAULT_LOG;
@@ -278,7 +297,7 @@ int main(int argc, char **argv)
 	};
 	struct json_store *js = NULL;
 	js = json_store_create(cli_path, &ctx.log);
-	printf("js: %p\n", (void *)js);
+	LOGL_(js ? KSC_LOG_DEBUG : KSC_LOG_ERROR, &ctx.log, "js: %p\n", (void *)js);
 	if (!js) {
 		fprintf(stderr, "%s: error reading JSON config file\n", cli_path);
 		return 1;
@@ -292,7 +311,8 @@ int main(int argc, char **argv)
 		fprintf(stderr, "no username, performing a device link\n");
 		r = ksignal_defer_get_new_uuid(BASE_URL,
 		                               .new_uuid = handle_new_uuid,
-		                               .on_close = on_close_do_stop) < 0;
+		                               .on_close = on_close_do_stop,
+		                               .udata = &ctx) < 0;
 	} else if (password) {
 		intptr_t *uuid;
 		uuid = ksc_ws_connect(js, .on_content = on_content,
@@ -311,15 +331,18 @@ int main(int argc, char **argv)
 	fio_start(.threads=1);
 
 	r = json_store_save(js);
-	printf("json_store_save returned %d\n", r);
+	LOGL_(r ? KSC_LOG_ERROR : KSC_LOG_DEBUG, &ctx.log,
+	      "json_store_save returned %d\n", r);
 	if (!r) {
 		r = json_store_load(js);
-		printf("json_store_load returned %d\n", r);
+		LOGL_(r ? KSC_LOG_DEBUG : KSC_LOG_ERROR, &ctx.log,
+		      "json_store_load returned %d\n", r);
 		r = !r;
 	}
 	if (!r) {
 		r = json_store_save(js);
-		printf("json_store_save returned %d\n", r);
+		LOGL_(r ? KSC_LOG_ERROR : KSC_LOG_DEBUG, &ctx.log,
+		      "json_store_save returned %d\n", r);
 	}
 	json_store_destroy(js);
 	return 0;

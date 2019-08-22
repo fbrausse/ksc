@@ -144,10 +144,11 @@ void ksc_log(enum ksc_log_lvl level, struct ksc_log *log,
 #define KSC_LOG(lvl, log_ctx, msg_context, ...) \
 	KSC_LOG_(KSC_LOG_ ## lvl, log_ctx, msg_context, __VA_ARGS__)
 
-#define KSC_DEBUG(lvl, ...) \
-	KSC_LOG(lvl, \
-	        (&KSC_DEFAULT_LOG), \
+#define KSC_DEBUGL(lvl, log, ...) \
+	KSC_LOG(lvl, log, \
 	        (&(struct ksc_log_context){ __FILE__ ":" KSC_XSTR(__LINE__), "92" }), \
 	        __VA_ARGS__)
+
+#define KSC_DEBUG(lvl, ...) KSC_DEBUGL(lvl, (&KSC_DEFAULT_LOG), __VA_ARGS__)
 
 #endif

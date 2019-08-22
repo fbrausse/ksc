@@ -69,19 +69,27 @@ static bool received_message(ws_s *ws, const Signalservice__Envelope *e,
 static int delete_request_on_response(ws_s *ws, struct signal_response *r,
                                       void *udata)
 {
-	KSC_DEBUG(NOTE, "deletion request response line: %d %s\n", r->status, r->message);
+	struct ksignal_ctx *ksc = udata;
+	LOG_(r->status == 204 ? KSC_LOG_DEBUG : KSC_LOG_WARN,
+	     "deletion request response line: %d %s\n", r->status, r->message);
 	return 0;
 	(void)ws;
-	(void)udata;
 }
+
+struct delete_request_args {
+	ws_s *ws;
+	struct ksignal_ctx *ksc;
+};
 
 static void delete_request(void *udata1, void *udata2)
 {
-	ws_s *s = udata1;
+	struct delete_request_args *args = udata1;
 	char *path = udata2;
-	signal_ws_send_request(s, "DELETE", path,
-	                       .on_response = delete_request_on_response);
+	signal_ws_send_request(args->ws, "DELETE", path,
+	                       .on_response = delete_request_on_response,
+	                       .udata = args->ksc);
 	free(path);
+	free(args);
 }
 
 static char * ack_message_path(const Signalservice__Envelope *e)
@@ -166,7 +174,9 @@ static bool received_envelope(ws_s *ws, const Signalservice__Envelope *e,
 	session_cipher_free(cipher);
 
 	if (!r || r == SG_ERR_DUPLICATE_MESSAGE) {
-		fio_defer(delete_request, ws, ack_message_path(e));
+		struct delete_request_args args = { ws, ksc };
+		fio_defer(delete_request, memdup(&args, sizeof(args)),
+		          ack_message_path(e));
 		r = 0;
 	}
 	if (!r && plaintext)
@@ -177,7 +187,7 @@ static bool received_envelope(ws_s *ws, const Signalservice__Envelope *e,
 	return r == 0;
 }
 
-static void print_envelope(const Signalservice__Envelope *e, int fd)
+static void print_envelope(const Signalservice__Envelope *e, int fd, bool detail)
 {
 	if (e->has_type) {
 		const char *type = NULL;
@@ -205,16 +215,21 @@ static void print_envelope(const Signalservice__Envelope *e, int fd)
 		dprintf(fd, "  timestamp: %s", buf);
 	}
 	if (e->has_legacymessage) {
-		dprintf(fd, "  has encrypted legacy message of size %zu\n",
-		        e->legacymessage.len);
-		ksc_dprint_hex(fd, e->legacymessage.data, e->legacymessage.len);
-		dprintf(fd, "\n");
+		dprintf(fd, "  has encrypted legacy message of size %zu%s\n",
+		        e->legacymessage.len, detail ? ":" : "");
+		if (detail) {
+			ksc_dprint_hex(fd, e->legacymessage.data,
+			               e->legacymessage.len);
+			dprintf(fd, "\n");
+		}
 	}
 	if (e->has_content) {
-		dprintf(fd, "  has encrypted content of size %zu:\n",
-		        e->content.len);
-		ksc_dprint_hex(fd, e->content.data, e->content.len);
-		dprintf(fd, "\n");
+		dprintf(fd, "  has encrypted content of size %zu%s\n",
+		        e->content.len, detail ? ":" : "");
+		if (detail) {
+			ksc_dprint_hex(fd, e->content.data, e->content.len);
+			dprintf(fd, "\n");
+		}
 	}
 	if (e->serverguid)
 		dprintf(fd, "  server guid: %s\n", e->serverguid);
@@ -272,8 +287,11 @@ static int handle_request(ws_s *ws, char *verb, char *path, uint64_t *id,
 			return -2;
 		}
 		LOG(INFO, "received envelope\n");
-		if (ksc_log_prints(KSC_LOG_NOTE, ksc->args.log, &log_ctx))
-			print_envelope(e, (ksc->args.log ? ksc->args.log : &KSC_DEFAULT_LOG)->fd);
+		if (ksc_log_prints(KSC_LOG_NOTE, ksc->args.log, &log_ctx)) {
+			int fd = (ksc->args.log ? ksc->args.log : &KSC_DEFAULT_LOG)->fd;
+			print_envelope(e, fd,
+			               ksc_log_prints(KSC_LOG_DEBUG, ksc->args.log, &log_ctx));
+		}
 		r = received_envelope(ws, e, ksc) ? 0 : -3;
 		signalservice__envelope__free_unpacked(e, NULL);
 	}
