@@ -1,6 +1,5 @@
 
 #include "ksc-ws.h"
-#include "utils.h"
 #include "crypto.h"
 
 #include <signal/protocol.h>
@@ -25,6 +24,17 @@ struct ksignal_ctx {
 	bool reconnecting_during_close;
 };
 
+static const struct ksc_log_context log_ctx = {
+	.desc = "ksc-ws",
+	.color = "94",
+};
+
+#define LOGL_(level,log,...)	KSC_LOG_(level, log, &log_ctx, __VA_ARGS__)
+#define LOGL(lvl,log,...)	KSC_LOG(lvl, log, &log_ctx, __VA_ARGS__)
+#define LOG_(level,...)		LOGL_(level, ksc->args.log, __VA_ARGS__)
+#define LOG(lvl,...)		LOGL(lvl, ksc->args.log, __VA_ARGS__)
+#define LOGr(r,...)		LOG_(r ? KSC_LOG_ERROR : KSC_LOG_DEBUG, __VA_ARGS__)
+
 static bool received_message(ws_s *ws, const Signalservice__Envelope *e,
                              uint8_t *text, size_t size,
                              struct ksignal_ctx *ksc)
@@ -34,16 +44,19 @@ static bool received_message(ws_s *ws, const Signalservice__Envelope *e,
 	print_hex(stdout, text, size);
 	printf("\n");*/
 	if (!one_and_zeroes_unpad(text, &size)) {
-		printf("ERROR: failed to one-and-zeroes-unpad!\n");
+		LOG(ERROR, "failed to one-and-zeroes-unpad!\n");
 		return false;
 	}
-	printf("decrypted Content (len: %zu): ", size);
-	print_hex(stdout, text, size);
-	printf("\n");
+	if (ksc_log_prints(KSC_LOG_DEBUG, ksc->args.log)) {
+		int fd = (ksc->args.log ? ksc->args.log : &KSC_DEFAULT_LOG)->fd;
+		LOG(DEBUG, "decrypted Content (len: %zu): ", size);
+		ksc_dprint_hex(fd, text, size);
+		dprintf(fd, "\n");
+	}
 	Signalservice__Content *c;
 	c = signalservice__content__unpack(NULL, size, text);
 	if (!c) {
-		printf("ERROR: decoding decrypted message into Content\n");
+		LOG(ERROR, "error decoding decrypted message into Content\n");
 		return false;
 	}
 	bool r = true;
@@ -56,7 +69,7 @@ static bool received_message(ws_s *ws, const Signalservice__Envelope *e,
 static int delete_request_on_response(ws_s *ws, struct signal_response *r,
                                       void *udata)
 {
-	printf("deletion request response line: %d %s\n", r->status, r->message);
+	KSC_DEBUG(NOTE, "deletion request response line: %d %s\n", r->status, r->message);
 	return 0;
 	(void)ws;
 	(void)udata;
@@ -84,12 +97,12 @@ static int received_ciphertext(signal_buffer **plaintext, uint8_t *content,
 {
 	signal_message *msg;
 	int r = signal_message_deserialize(&msg, content, size, ksc->ctx);
-	printf("signal_message_deserialize -> %d\n", r);
+	LOGr(r, "signal_message_deserialize -> %d\n", r);
 	if (r)
 		goto done;
 
 	r = session_cipher_decrypt_signal_message(cipher, msg, NULL, plaintext);
-	printf("session_cipher_decrypt_signal_message -> %d\n", r);
+	LOGr(r, "session_cipher_decrypt_signal_message -> %d\n", r);
 done:
 	SIGNAL_UNREF(msg);
 	return r;
@@ -102,13 +115,15 @@ static int received_pkbundle(signal_buffer **plaintext, uint8_t *content,
 	pre_key_signal_message *msg;
 	int r;
 	r = pre_key_signal_message_deserialize(&msg, content, size, ksc->ctx);
-	printf("pre_key_signal_message_deserialize -> %d\n", r);
+	LOGr(r, "pre_key_signal_message_deserialize -> %d\n", r);
 	if (r)
 		goto done;
 
 	r = session_cipher_decrypt_pre_key_signal_message(cipher, msg, NULL,
 	                                                  plaintext);
-	printf("session_cipher_decrypt_pre_key_signal_message -> %d\n", r);
+	LOG_(!r ? KSC_LOG_DEBUG :
+	     r == SG_ERR_DUPLICATE_MESSAGE ? KSC_LOG_WARN : KSC_LOG_ERROR,
+	     "session_cipher_decrypt_pre_key_signal_message -> %d\n", r);
 done:
 	SIGNAL_UNREF(msg);
 	return r;
@@ -129,7 +144,7 @@ static bool received_envelope(ws_s *ws, const Signalservice__Envelope *e,
 
 	received_envelope_handler *handler;
 	if (e->type >= ARRAY_SIZE(handlers) || !(handler = handlers[e->type])) {
-		printf("cannot handle envelope type %d!\n", e->type);
+		LOG(ERROR, "cannot handle envelope type %d!\n", e->type);
 		return false;
 	}
 
@@ -141,7 +156,7 @@ static bool received_envelope(ws_s *ws, const Signalservice__Envelope *e,
 
 	session_cipher *cipher;
 	int r = session_cipher_create(&cipher, ksc->psctx, &addr, ksc->ctx);
-	printf("session_cipher_create -> %d\n", r);
+	LOGr(r, "session_cipher_create -> %d\n", r);
 	if (r)
 		return r;
 
@@ -162,7 +177,7 @@ static bool received_envelope(ws_s *ws, const Signalservice__Envelope *e,
 	return r == 0;
 }
 
-static void print_envelope(const Signalservice__Envelope *e)
+static void print_envelope(const Signalservice__Envelope *e, int fd)
 {
 	if (e->has_type) {
 		const char *type = NULL;
@@ -175,39 +190,39 @@ static void print_envelope(const Signalservice__Envelope *e)
 		case UNIDENTIFIED_SENDER: type = "unidentified sender"; break;
 		case _SIGNALSERVICE__ENVELOPE__TYPE_IS_INT_SIZE: break;
 		}
-		printf("  type: %s (%d)\n", type, e->type);
+		dprintf(fd, "  type: %s (%d)\n", type, e->type);
 	}
 	if (e->source)
-		printf("  source: %s\n", e->source);
+		dprintf(fd, "  source: %s\n", e->source);
 	if (e->has_sourcedevice)
-		printf("  source device: %u\n", e->sourcedevice);
+		dprintf(fd, "  source device: %u\n", e->sourcedevice);
 	if (e->relay)
-		printf("  relay: %s\n", e->relay);
+		dprintf(fd, "  relay: %s\n", e->relay);
 	if (e->has_timestamp) {
 		char buf[32];
 		time_t t = e->timestamp / 1000;
 		ctime_r(&t, buf);
-		printf("  timestamp: %s", buf);
+		dprintf(fd, "  timestamp: %s", buf);
 	}
 	if (e->has_legacymessage) {
-		printf("  has encrypted legacy message of size %zu\n",
-		       e->legacymessage.len);
-		print_hex(stdout, e->legacymessage.data, e->legacymessage.len);
-		printf("\n");
+		dprintf(fd, "  has encrypted legacy message of size %zu\n",
+		        e->legacymessage.len);
+		ksc_dprint_hex(fd, e->legacymessage.data, e->legacymessage.len);
+		dprintf(fd, "\n");
 	}
 	if (e->has_content) {
-		printf("  has encrypted content of size %zu:\n",
-		       e->content.len);
-		print_hex(stdout, e->content.data, e->content.len);
-		printf("\n");
+		dprintf(fd, "  has encrypted content of size %zu:\n",
+		        e->content.len);
+		ksc_dprint_hex(fd, e->content.data, e->content.len);
+		dprintf(fd, "\n");
 	}
 	if (e->serverguid)
-		printf("  server guid: %s\n", e->serverguid);
+		dprintf(fd, "  server guid: %s\n", e->serverguid);
 	if (e->has_servertimestamp) {
 		char buf[32];
 		time_t t = e->servertimestamp / 1000;
 		ctime_r(&t, buf);
-		printf("  server timestamp: %s", buf);
+		dprintf(fd, "  server timestamp: %s", buf);
 	}
 }
 
@@ -238,7 +253,7 @@ static int handle_request(ws_s *ws, char *verb, char *path, uint64_t *id,
 
 	if (!strcmp(verb, "PUT") && !strcmp(path, "/api/v1/message")) {
 		/* new message received :) */
-		printf("message received, encrypted: %d\n", is_enc);/*
+		LOG(DEBUG, "message received, encrypted: %d\n", is_enc);/*
 		print_hex(stdout, body, size);
 		printf("\n");*/
 		size_t sg_key_b64_len;
@@ -247,17 +262,18 @@ static int handle_request(ws_s *ws, char *verb, char *path, uint64_t *id,
 			                                    &sg_key_b64_len);
 		if (is_enc && !decrypt_envelope(&body, &size,
 		                                sg_key_b64, sg_key_b64_len)) {
-			fprintf(stderr, "error decrypting envelope\n");
+			LOG(ERROR, "error decrypting envelope\n");
 			return -1;
 		}
 		Signalservice__Envelope *e;
 		e = signalservice__envelope__unpack(NULL, size, body);
 		if (!e) {
-			fprintf(stderr, "error decoding envelope protobuf\n");
+			LOG(ERROR, "error decoding envelope protobuf\n");
 			return -2;
 		}
-		printf("received envelope:\n");
-		print_envelope(e);
+		LOG(INFO, "received envelope\n");
+		if (ksc_log_prints(KSC_LOG_NOTE, ksc->args.log))
+			print_envelope(e, (ksc->args.log ? ksc->args.log : &KSC_DEFAULT_LOG)->fd);
 		r = received_envelope(ws, e, ksc) ? 0 : -3;
 		signalservice__envelope__free_unpacked(e, NULL);
 	}
@@ -278,25 +294,30 @@ static void ksignal_ctx_destroy(struct ksignal_ctx *ksc)
 static void ctx_log(int level, const char *message, size_t len, void *user_data)
 {
 	struct ksignal_ctx *ksc = user_data;
-	if (ksc->args.signal_ctx_log) {
-		enum ksc_ws_log lvl;
+	if (ksc->args.log) {
+		enum ksc_log_lvl lvl;
 		switch (level) {
-		case SG_LOG_ERROR  : lvl = KSC_WS_LOG_ERROR; break;
-		case SG_LOG_WARNING: lvl = KSC_WS_LOG_WARNING; break;
-		case SG_LOG_NOTICE : lvl = KSC_WS_LOG_NOTICE; break;
-		case SG_LOG_INFO   : lvl = KSC_WS_LOG_INFO; break;
-		case SG_LOG_DEBUG  : lvl = KSC_WS_LOG_DEBUG; break;
+		case SG_LOG_ERROR  : lvl = KSC_LOG_ERROR; break;
+		case SG_LOG_WARNING: lvl = KSC_LOG_WARN; break;
+		/* for libsignal-protocol-c, NOTICE is more severe than INFO;
+		 * not for us: INFO is an information to the user, while NOTE
+		 * is just a note, not a notification */
+		case SG_LOG_NOTICE : lvl = KSC_LOG_INFO; break;
+		case SG_LOG_INFO   : lvl = KSC_LOG_NOTE; break;
+		case SG_LOG_DEBUG  : lvl = KSC_LOG_DEBUG; break;
 		default:
-#define ERR "Invalid log level from signal-protocol-c library for the following message."
-			ksc->args.signal_ctx_log(KSC_WS_LOG_ERROR, ERR, sizeof(ERR)-1, ksc->args.udata);
-			lvl = KSC_WS_LOG_ERROR;
-#undef ERR
+			LOG(DEBUG, "Invalid log level %d from signal-protocol-c "
+			    "library for the following signal-ctx message.",
+			    level);
+			lvl = KSC_LOG_ERROR;
 		}
-		ksc->args.signal_ctx_log(lvl, message, len, ksc->args.udata);
+		KSC_LOG_(lvl, ksc->args.log, &ksc->args.signal_log_ctx, "%.*s\n",
+		         (int)CLAMP(len,0,INT_MAX), message);
 	}
 }
 
-static struct ksignal_ctx * ksignal_ctx_create(struct json_store *js)
+static struct ksignal_ctx * ksignal_ctx_create(struct json_store *js,
+                                               struct ksc_log *log)
 {
 	struct ksignal_ctx *ksc = NULL;
 
@@ -315,7 +336,7 @@ static struct ksignal_ctx * ksignal_ctx_create(struct json_store *js)
 
 	int r = signal_context_create(&ksc->ctx, ksc);
 	if (r) {
-		printf("signal_context_create failed with code %d\n", r);
+		LOGL(ERROR, log, "signal_context_create failed with code %d\n", r);
 		goto fail;
 	}
 
@@ -324,7 +345,7 @@ static struct ksignal_ctx * ksignal_ctx_create(struct json_store *js)
 
 	r = signal_protocol_store_context_create(&ksc->psctx, ksc->ctx);
 	if (r) {
-		printf("signal_protocol_store_context_create failed with code %d\n", r);
+		LOGL(ERROR, log, "signal_protocol_store_context_create failed with code %d\n", r);
 		goto fail;
 	}
 
@@ -349,8 +370,8 @@ static void on_open(ws_s *ws, void *udata)
 static void on_close(intptr_t uuid, void *udata)
 {
 	struct ksignal_ctx *ksc = udata;
+	ksc->uuid = -1;
 	if (ksc->args.on_close_do_reconnect) {
-		ksc->uuid = 0;
 		if (!ksc->reconnecting_during_close) {
 			ksc->reconnecting_during_close = true;
 			ksc->uuid = signal_ws_connect(ksc->url,
@@ -361,7 +382,7 @@ static void on_close(intptr_t uuid, void *udata)
 				.on_close = on_close,
 			);
 		}
-		if (ksc->uuid)
+		if (ksc->uuid >= 0)
 			return;
 	}
 	if (ksc->args.on_close)
@@ -379,9 +400,9 @@ static void on_shutdown(ws_s *s, void *udata)
 intptr_t * (ksc_ws_connect)(struct json_store *js,
                             struct ksc_ws_connect_args args)
 {
-	struct ksignal_ctx *ksc = ksignal_ctx_create(js);
+	struct ksignal_ctx *ksc = ksignal_ctx_create(js, args.log);
 	if (!ksc) {
-		fprintf(stderr, "error init'ing ksignal_ctx\n");
+		LOGL(ERROR, args.log, "error init'ing ksignal_ctx\n");
 		return NULL;
 	}
 	ksc->args = args;

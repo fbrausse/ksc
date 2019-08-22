@@ -38,11 +38,11 @@ static void _provisioning_on_close(intptr_t uuid, void *udata)
 	free(h);
 }
 
-int (ksignal_defer_get_new_uuid)(const char *base_url,
-                                 struct provisioning_sock ps)
+intptr_t (ksignal_defer_get_new_uuid)(const char *base_url,
+                                      struct provisioning_sock ps)
 {
 	char *url = ckprintf("%s/v1/websocket/provisioning/", base_url);
-	int r = signal_ws_connect(url,
+	intptr_t r = signal_ws_connect(url,
 		.on_open = NULL, /* nothing to do, server will send first request */
 		.handle_request = _provisioning_handle_request,
 		.on_ready = NULL, /* TODO: reply to request */

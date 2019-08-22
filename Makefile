@@ -21,7 +21,7 @@ else
   test: override LDLIBS += -lcrypto
 endif
 
-CSTD = -std=c99
+CSTD = -std=c11
 
 override CPPFLAGS += \
 	-D_POSIX_C_SOURCE=200809L \

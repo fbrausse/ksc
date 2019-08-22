@@ -126,9 +126,72 @@ char * ckprintf(const char *fmt, ...)
 	return n == -1 ? free(buf), NULL : buf;
 }
 
-void print_hex(FILE *f, const uint8_t *buf, size_t size)
+void ksc_dprint_hex(int fd, const uint8_t *buf, size_t size)
 {
 	static const char HEX[] = "0123456789abcdef";
 	for (size_t i=0; i<size; i++)
-		fprintf(f, "%c%c ", HEX[buf[i] >> 4], HEX[buf[i] & 0xf]);
+		dprintf(fd, "%c%c%s", HEX[buf[i] >> 4], HEX[buf[i] & 0xf],
+		        i+1 < size ? " " : "");
+}
+
+static void ksc_log_desc_msg(int fd, enum ksc_log_lvl level,
+                             const struct ksc_log_context *context)
+{
+#define BOLD	"1;"
+	static const char *const colors[] = {
+		[KSC_LOG_ERROR] = BOLD "91", /* bold bright red */
+		[KSC_LOG_WARN ] = BOLD "93", /* bold bright yellow */
+		[KSC_LOG_INFO ] = BOLD "96", /* bold bright cyan */
+		[KSC_LOG_NOTE ] =      "96", /* bright cyan */
+		[KSC_LOG_DEBUG] =      "92", /* bright green */
+	};
+#undef BOLD
+	static const char *const lvls[] = {
+		[KSC_LOG_ERROR] = "error",
+		[KSC_LOG_WARN ] = "warn ",
+		[KSC_LOG_INFO ] = "info ",
+		[KSC_LOG_NOTE ] = "note ",
+		[KSC_LOG_DEBUG] = "debug",
+	};
+	level = MIN(level,ARRAY_SIZE(lvls)-1);
+	const char *desc = context && context->desc ? context->desc : "";
+	if (isatty(fd)) {
+		const char *color;
+		color = context && context->color ? context->color : "0";
+/* VT100 color escape sequence */
+#define COLOR "\x1b[%sm"
+		dprintf(fd, COLOR "[%s]" COLOR " " COLOR "%s" COLOR ": ",
+		        colors[level], lvls[level], "0",
+		        color, desc, "0");
+#undef COLOR
+	} else {
+		dprintf(fd, "[%s] %s: ", lvls[level], desc);
+	}
+}
+
+void ksc_vlog(enum ksc_log_lvl level, struct ksc_log *log,
+              const struct ksc_log_context *context, const char *fmt,
+              va_list ap)
+{
+	static struct ksc_log default_log = { INT_MAX, STDERR_FILENO };
+
+	level = MAX(KSC_LOG_ERROR, level);
+	if (!log)
+		log = &default_log;
+
+	if (level > log->max_lvl)
+		return;
+
+	ksc_log_desc_msg(log->fd, level, context);
+	vdprintf(log->fd, fmt, ap);
+}
+
+__attribute__((format(printf,4,5)))
+void ksc_log(enum ksc_log_lvl level, struct ksc_log *log,
+             const struct ksc_log_context *context, const char *fmt, ...)
+{
+	va_list ap;
+	va_start(ap,fmt);
+	ksc_vlog(level, log, context, fmt, ap);
+	va_end(ap);
 }

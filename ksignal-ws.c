@@ -372,7 +372,7 @@ intptr_t (signal_ws_connect)(const char *url, struct signal_ws_handler h)
 		.udata       = memdup(&h, sizeof(h)),
 	};
 	fio_tls_s *tls = signal_tls((KSIGNAL_SERVER_CERT));
-	int r = http_connect(url, NULL,
+	intptr_t r = http_connect(url, NULL,
 	                     .on_request = _on_websocket_http_connected,
 	                     .on_response = _on_websocket_http_connected,
 	                     .on_finish = _on_websocket_http_connection_finished,
