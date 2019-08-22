@@ -8,10 +8,22 @@
 
 #include <protobuf-c/protobuf-c.h>	/* ProtobufCMessage */
 
+static const struct ksc_log_context log_ctx = {
+	.desc = "ksignal-ws",
+	.color = "33",
+};
+
+/* shortcuts */
+#define LOGL_(level,log,...)	KSC_LOG_(level, log, &log_ctx, __VA_ARGS__)
+#define LOGL(lvl,log,...)	KSC_LOG(lvl, log, &log_ctx, __VA_ARGS__)
+#define LOG_(level,...)		LOGL_(level, h->log, __VA_ARGS__)
+#define LOG(lvl,...)		LOGL(lvl, h->log, __VA_ARGS__)
+
 const char BASE_URL[] = "wss://textsecure-service.whispersystems.org:443";
 
 static int signal_ws_send(ws_s *s, ProtobufCMessage *request_or_response)
 {
+	struct signal_ws_connect_args *h = websocket_udata_get(s);
 	Signalservice__WebSocketMessage ws_msg =
 		SIGNALSERVICE__WEB_SOCKET_MESSAGE__INIT;
 	if (request_or_response->descriptor ==
@@ -19,22 +31,28 @@ static int signal_ws_send(ws_s *s, ProtobufCMessage *request_or_response)
 		ws_msg.has_type = true;
 		ws_msg.type = SIGNALSERVICE__WEB_SOCKET_MESSAGE__TYPE__REQUEST;
 		ws_msg.request = (Signalservice__WebSocketRequestMessage *)request_or_response;
-		printf("sending request ws message: %s %s",
-		       ws_msg.request->verb, ws_msg.request->path);
-		if (ws_msg.request->has_id)
-			printf(" (id: %lu)", ws_msg.request->id);
-		printf("\n");
+		if (ksc_log_prints(KSC_LOG_NOTE, h->log)) {
+			LOG(NOTE, "sending request ws message: %s %s",
+			    ws_msg.request->verb, ws_msg.request->path);
+			int fd = (h->log ? h->log : &KSC_DEFAULT_LOG)->fd;
+			if (ws_msg.request->has_id)
+				dprintf(fd, " (id: %lu)", ws_msg.request->id);
+			dprintf(fd, "\n");
+		}
 	} else if (request_or_response->descriptor ==
 	           &signalservice__web_socket_response_message__descriptor) {
 		ws_msg.has_type = true;
 		ws_msg.type = SIGNALSERVICE__WEB_SOCKET_MESSAGE__TYPE__REQUEST;
 		ws_msg.response = (Signalservice__WebSocketResponseMessage *)request_or_response;
-		printf("sending response ws message: %d %s",
-		       ws_msg.response->has_status ? ws_msg.response->status : -1U,
-		       ws_msg.response->message);
-		if (ws_msg.response->has_id)
-			printf(" (id: %lu)", ws_msg.response->id);
-		printf("\n");
+		if (ksc_log_prints(KSC_LOG_NOTE, h->log)) {
+			LOG(NOTE, "sending response ws message: %d %s",
+			    ws_msg.response->has_status ? ws_msg.response->status : -1U,
+			    ws_msg.response->message);
+			int fd = (h->log ? h->log : &KSC_DEFAULT_LOG)->fd;
+			if (ws_msg.response->has_id)
+				dprintf(fd, " (id: %lu)", ws_msg.response->id);
+			dprintf(fd, "\n");
+		}
 	} else {
 		printf("sending unknown ws message (not actually)\n");
 		assert(0);
@@ -79,7 +97,7 @@ static void _on_requested_message(fio_msg_s *msg)
 {
 	struct requested_subscription *s = msg->udata2;
 	if (msg->filter != _id2filter(s->id)) {
-		fprintf(stderr, "_on_requested_message: ids don't match "
+		KSC_DEBUG(WARN, "_on_requested_message: ids don't match "
 		        "(coincidence?): _id2filter(s->id): %u, msg->filter: %u\n",
 		        _id2filter(s->id), msg->filter);
 		return;
@@ -170,15 +188,18 @@ int signal_ws_send_response(ws_s *s, int status, char *message, uint64_t *id)
 
 static void _on_ws_request(ws_s *s,
                            Signalservice__WebSocketRequestMessage *request,
-                           struct signal_ws_handler *h)
+                           struct signal_ws_connect_args *h)
 {
-	printf("ws request: %s %s\n", request->verb, request->path);
-	for (size_t i=0; i<request->n_headers; i++)
-		printf("%s\n", request->headers[i]);
-	if (request->has_id)
-		printf("  id: %lu\n", request->id);
-	if (request->has_body)
-		printf("  body size: %lu\n", request->body.len);
+	if (ksc_log_prints(KSC_LOG_NOTE, h->log)) {
+		LOG(NOTE, "ws request: %s %s\n", request->verb, request->path);
+		int fd = (h->log ? h->log : &KSC_DEFAULT_LOG)->fd;
+		for (size_t i=0; i<request->n_headers; i++)
+			dprintf(fd, "  header: %s\n", request->headers[i]);
+		if (request->has_id)
+			dprintf(fd, "  id: %lu\n", request->id);
+		if (request->has_body)
+			dprintf(fd, "  body size: %lu\n", request->body.len);
+	}
 	int r = 0;
 	if (h && h->handle_request)
 		r = h->handle_request(s, request->verb, request->path,
@@ -197,18 +218,21 @@ static void _on_ws_request(ws_s *s,
 
 static void _on_ws_response(ws_s *s,
                             Signalservice__WebSocketResponseMessage *response,
-                            struct signal_ws_handler *h, char *scratch)
+                            struct signal_ws_connect_args *h, char *scratch)
 {
-	printf("ws response, status: ");
-	if (response->has_status)
-		printf("%u ", response->status);
-	printf("%s\n", response->message);
-	for (size_t i=0; i<response->n_headers; i++)
-		printf("%s\n", response->headers[i]);
-	if (response->has_id)
-		printf("  id: %lu\n", response->id);
-	if (response->has_body)
-		printf("  body size: %lu\n", response->body.len);
+	if (ksc_log_prints(KSC_LOG_NOTE, h->log)) {
+		LOG(NOTE, "ws response, status: ");
+		int fd = (h->log ? h->log : &KSC_DEFAULT_LOG)->fd;
+		if (response->has_status)
+			dprintf(fd, "%u ", response->status);
+		dprintf(fd, "%s\n", response->message);
+		for (size_t i=0; i<response->n_headers; i++)
+			dprintf(fd, "%s\n", response->headers[i]);
+		if (response->has_id)
+			dprintf(fd, "  id: %lu\n", response->id);
+		if (response->has_body)
+			dprintf(fd, "  body size: %lu\n", response->body.len);
+	}
 	if (response->has_id) {
 		/* TODO: inefficient repacking of unpacked protobuf */
 		size_t sz = signalservice__web_socket_response_message__pack(response, (uint8_t *)scratch);
@@ -229,22 +253,22 @@ static void _on_ws_response(ws_s *s,
 
 static void _signal_ws_on_message(ws_s *ws, fio_str_info_s msg, uint8_t is_text)
 {
-	printf("ws received %s message of length %zu\n",
-	       is_text ? "text" : "binary", msg.len);
+	struct signal_ws_connect_args *h = websocket_udata_get(ws);
+	LOG(DEBUG, "ws received %s message of length %zu\n",
+	    is_text ? "text" : "binary", msg.len);
 	Signalservice__WebSocketMessage *ws_msg =
 		signalservice__web_socket_message__unpack(NULL, msg.len,
 		                                          (uint8_t *)msg.data);
-	printf("%p\n", (void *)ws_msg);
+	KSC_DEBUG(DEBUG, "%p\n", (void *)ws_msg);
 	assert(ws_msg->has_type);
 	switch (ws_msg->type) {
 	case SIGNALSERVICE__WEB_SOCKET_MESSAGE__TYPE__REQUEST:
 		assert(ws_msg->request);
-		_on_ws_request(ws, ws_msg->request, websocket_udata_get(ws));
+		_on_ws_request(ws, ws_msg->request, h);
 		break;
 	case SIGNALSERVICE__WEB_SOCKET_MESSAGE__TYPE__RESPONSE:
 		assert(ws_msg->response);
-		_on_ws_response(ws, ws_msg->response, websocket_udata_get(ws),
-		                msg.data);
+		_on_ws_response(ws, ws_msg->response, h, msg.data);
 		break;
 	default:
 		printf("unknown ws_msg->type: %d\n", ws_msg->type);
@@ -267,11 +291,12 @@ static void _signal_ws_run_timed_keepalive(ws_s *s)
 static int _signal_ws_keepalive_on_response(ws_s *s, struct signal_response *r,
                                             void *udata)
 {
+	struct signal_ws_connect_args *h = websocket_udata_get(s);
 	if (200 <= r->status && r->status < 300)
 		_signal_ws_run_timed_keepalive(s);
 	else
-		printf("keep-alive request failed with status %u %s\n",
-		       r->status, r->message);
+		LOG(ERROR, "keep-alive request failed with status %u %s\n",
+		    r->status, r->message);
 	return 0;
 	(void)udata;
 }
@@ -279,34 +304,35 @@ static int _signal_ws_keepalive_on_response(ws_s *s, struct signal_response *r,
 static void _signal_ws_keepalive(void *udata)
 {
 	ws_s *s = udata;
-	printf("sending keep-alive\n");
+	struct signal_ws_connect_args *h = websocket_udata_get(s);
+	LOG(DEBUG, "sending keep-alive\n");
 	int r = signal_ws_send_request(s, "GET", "/v1/keepalive",
 	                               .on_response = _signal_ws_keepalive_on_response);
 	if (r == -1)
-		printf("sending keep-alive failed\n");
+		LOG(ERROR, "sending keep-alive failed\n");
 }
 
 static void _signal_ws_on_open(ws_s *s)
 {
-	printf("signal_ws_open\n");
+	struct signal_ws_connect_args *h = websocket_udata_get(s);
+	LOG(DEBUG, "signal_ws_open\n");
 	_signal_ws_run_timed_keepalive(s);
-	struct signal_ws_handler *h = websocket_udata_get(s);
 	if (h && h->on_open)
 		h->on_open(s, h->udata);
 }
 
 static void _signal_ws_on_shutdown(ws_s *s)
 {
-	printf("signal_ws_shutdown\n");
-	struct signal_ws_handler *h = websocket_udata_get(s);
+	struct signal_ws_connect_args *h = websocket_udata_get(s);
+	LOG(DEBUG, "signal_ws_shutdown\n");
 	if (h && h->on_shutdown)
 		h->on_shutdown(s, h->udata);
 }
 
 static void _signal_ws_on_ready(ws_s *s)
 {
-	printf("signal_ws_ready\n");
-	struct signal_ws_handler *h = websocket_udata_get(s);
+	struct signal_ws_connect_args *h = websocket_udata_get(s);
+	LOG(DEBUG, "signal_ws_ready\n");
 	if (h && h->on_ready)
 		h->on_ready(s, h->udata);
 }
@@ -314,7 +340,7 @@ static void _signal_ws_on_ready(ws_s *s)
 static void _signal_ws_on_close(intptr_t uuid, void *udata)
 {
 	printf("signal_ws_close\n");
-	struct signal_ws_handler *h = udata;
+	struct signal_ws_connect_args *h = udata;
 	if (h && h->on_close)
 		h->on_close(uuid, h->udata);
 	free(h);
@@ -322,11 +348,11 @@ static void _signal_ws_on_close(intptr_t uuid, void *udata)
 
 static void _on_websocket_http_connected(http_s *h) {
   websocket_settings_s *s = h->udata;
-  fprintf(stderr, "on_websocket_http_connected\n");
+  KSC_DEBUG(DEBUG, "on_websocket_http_connected\n");
   h->udata = http_settings(h)->udata = NULL;
   if (!h->path) {
-    fprintf(stderr, "(websocket client) path not specified in "
-                    "address, assuming root!");
+    KSC_DEBUG(DEBUG, "(websocket client) path not specified in "
+                     "address, assuming root!");
     h->path = fiobj_str_new("/", 1);
   }
 #ifdef SIGNAL_USER_AGENT
@@ -334,13 +360,13 @@ static void _on_websocket_http_connected(http_s *h) {
 	                                       sizeof("X-Signal-Agent: " SIGNAL_USER_AGENT)-1));
 #endif
   int r = (http_upgrade2ws)(h, *s);
-  fprintf(stderr, "http_upgrade2ws: %d\n", r);
+  KSC_DEBUG(DEBUG, "http_upgrade2ws: %d\n", r);
   free(s);
 }
 
 static void _on_websocket_http_connection_finished(http_settings_s *settings) {
   websocket_settings_s *s = settings->udata;
-  fprintf(stderr, "on_websocket_http_connection_finished\n");
+  KSC_DEBUG(DEBUG, "on_websocket_http_connection_finished\n");
   if (s) {
     if (s->on_close)
       s->on_close(0, s->udata);
@@ -359,9 +385,9 @@ fio_tls_s * signal_tls(const char *cert_path)
 }
 
 #ifdef KSIGNAL_SERVER_CERT
-intptr_t (signal_ws_connect)(const char *url, struct signal_ws_handler h)
+intptr_t (signal_ws_connect)(const char *url, struct signal_ws_connect_args h)
 {
-	printf("signal ws connect to %s\n", url);
+	LOGL(NOTE, h.log, "signal ws connect to %s\n", url);
 	websocket_settings_s *ws_settings = malloc(sizeof(websocket_settings_s));
 	*ws_settings = (websocket_settings_s){
 		.on_open     = _signal_ws_on_open,

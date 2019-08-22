@@ -6,7 +6,18 @@
 #include <signal/signal_protocol.h>
 #include <signal/session_cipher.h>
 
+static const struct ksc_log_context log_ctx = {
+	.desc = "ksc-ws",
+	.color = "34",
+};
+
 /* shortcuts */
+#define LOGL_(level,log,...)	KSC_LOG_(level, log, &log_ctx, __VA_ARGS__)
+#define LOGL(lvl,log,...)	KSC_LOG(lvl, log, &log_ctx, __VA_ARGS__)
+#define LOG_(level,...)		LOGL_(level, ksc->args.log, __VA_ARGS__)
+#define LOG(lvl,...)		LOGL(lvl, ksc->args.log, __VA_ARGS__)
+#define LOGr(r,...)		LOG_(r ? KSC_LOG_ERROR : KSC_LOG_DEBUG, __VA_ARGS__)
+
 #define UNKNOWN             SIGNALSERVICE__ENVELOPE__TYPE__UNKNOWN
 #define CIPHERTEXT          SIGNALSERVICE__ENVELOPE__TYPE__CIPHERTEXT
 #define KEY_EXCHANGE        SIGNALSERVICE__ENVELOPE__TYPE__KEY_EXCHANGE
@@ -23,17 +34,6 @@ struct ksignal_ctx {
 	struct ksc_ws_connect_args args;
 	bool reconnecting_during_close;
 };
-
-static const struct ksc_log_context log_ctx = {
-	.desc = "ksc-ws",
-	.color = "94",
-};
-
-#define LOGL_(level,log,...)	KSC_LOG_(level, log, &log_ctx, __VA_ARGS__)
-#define LOGL(lvl,log,...)	KSC_LOG(lvl, log, &log_ctx, __VA_ARGS__)
-#define LOG_(level,...)		LOGL_(level, ksc->args.log, __VA_ARGS__)
-#define LOG(lvl,...)		LOGL(lvl, ksc->args.log, __VA_ARGS__)
-#define LOGr(r,...)		LOG_(r ? KSC_LOG_ERROR : KSC_LOG_DEBUG, __VA_ARGS__)
 
 static bool received_message(ws_s *ws, const Signalservice__Envelope *e,
                              uint8_t *text, size_t size,
