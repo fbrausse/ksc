@@ -101,7 +101,8 @@ static void handle_new_uuid(char *uuid, void *udata)
 	LOG(INFO, "got new uuid: %s\n", uuid);
 }
 
-static int recv_get_profile(ws_s *ws, struct signal_response *r, void *udata)
+static int recv_get_profile(ws_s *ws, struct ksc_signal_response *r,
+                            void *udata)
 {
 	struct ksc_ctx *ksc = udata;
 	LOG_(r->status == 200 ? KSC_LOG_INFO : KSC_LOG_ERROR,
@@ -139,7 +140,8 @@ static int recv_get_profile(ws_s *ws, struct signal_response *r, void *udata)
 	(void)ws;
 }
 
-static int recv_get_pre_key(ws_s *ws, struct signal_response *r, void *udata)
+static int recv_get_pre_key(ws_s *ws, struct ksc_signal_response *r,
+                            void *udata)
 {
 	struct ksc_ctx *ksc = udata;
 	LOG(INFO, "recv get pre key: %u %s: %.*s\n",
@@ -148,7 +150,7 @@ static int recv_get_pre_key(ws_s *ws, struct signal_response *r, void *udata)
 	(void)ws;
 }
 
-static int recv_get_cert_delivery(ws_s *ws, struct signal_response *r,
+static int recv_get_cert_delivery(ws_s *ws, struct ksc_signal_response *r,
                                   void *udata)
 {
 	struct ksc_ctx *ksc = udata;
@@ -178,8 +180,7 @@ recv messages: 200 OK
 }
 These should be ACK-ed as per fio_defer(delete_request) ...
 #endif
-static int recv_messages(ws_s *ws, struct signal_response *r,
-                                  void *udata)
+static int recv_messages(ws_s *ws, struct ksc_signal_response *r, void *udata)
 {
 	struct ksc_ctx *ksc = udata;
 	LOG(INFO, "recv messages: %d %s\n", r->status, r->message);
@@ -198,21 +199,21 @@ static void send_get_profile(ws_s *s, void *udata)
 	struct ksc_ctx *ksc = udata;
 #if 0 && defined(DEFAULT_GET_PROFILE_NUMBER)
 	// works
-	signal_ws_send_request(s, "GET",
-	                       "/v1/profile/" DEFAULT_GET_PROFILE_NUMBER,
-	                       .on_response = recv_get_profile, .udata = ksc);
+	ksc_ws_send_request(s, "GET",
+	                    "/v1/profile/" DEFAULT_GET_PROFILE_NUMBER,
+	                    .on_response = recv_get_profile, .udata = ksc);
 	// fails
-	signal_ws_send_request(s, "GET",
-	                       "/v2/keys/" DEFAULT_GET_PROFILE_NUMBER "/*",
-	                       .on_response = recv_get_pre_key, .udata = ksc);
+	ksc_ws_send_request(s, "GET",
+	                    "/v2/keys/" DEFAULT_GET_PROFILE_NUMBER "/*",
+	                    .on_response = recv_get_pre_key, .udata = ksc);
 	// fails
-	signal_ws_send_request(s, "GET", "/v1/certificate/delivery",
-	                       .on_response = recv_get_cert_delivery,
-	                       .udata = ksc);
+	ksc_ws_send_request(s, "GET", "/v1/certificate/delivery",
+	                    .on_response = recv_get_cert_delivery,
+	                    .udata = ksc);
 #elif 1
-	signal_ws_send_request(s, "GET", "/v1/messages/",
-	                       .on_response = recv_messages,
-	                       .udata = ksc);
+	ksc_ws_send_request(s, "GET", "/v1/messages/",
+	                    .on_response = recv_messages,
+	                    .udata = ksc);
 #else
 	(void)ksc;
 	(void)s;
@@ -225,8 +226,8 @@ static bool on_content(ws_s *ws, const Signalservice__Envelope *e,
 	struct ksc_ctx *ksc = udata;
 	LOG(INFO, "received content:\n");
 	if (ksc_log_prints(KSC_LOG_INFO, &ksc->log, &log_ctx)) {
-		print_envelope(e, ksc->log.fd,
-		               ksc_log_prints(KSC_LOG_DEBUG, &ksc->log, &log_ctx));
+		ksc_print_envelope(e, ksc->log.fd,
+		                   ksc_log_prints(KSC_LOG_DEBUG, &ksc->log, &log_ctx));
 	}
 	if (c->datamessage && ksc_log_prints(KSC_LOG_INFO, &ksc->log, &log_ctx)) {
 		dprintf(ksc->log.fd, "  ------ data ------\n");
@@ -315,18 +316,20 @@ int main(int argc, char **argv)
 	const char *password = json_store_get_password_base64(js);
 	if (!number) {
 		fprintf(stderr, "no username, performing a device link\n");
-		r = ksignal_defer_get_new_uuid(BASE_URL,
-		                               .new_uuid = handle_new_uuid,
-		                               .on_close = on_close_do_stop,
-		                               .udata = &ctx) < 0;
+		r = ksc_defer_get_new_uuid(KSC_BASE_URL,
+		                           .new_uuid = handle_new_uuid,
+		                           .on_close = on_close_do_stop,
+		                           .udata = &ctx) < 0;
 	} else if (password) {
 		intptr_t *uuid;
-		uuid = ksc_ws_connect(js, .on_content = on_content,
-		                          .on_open = send_get_profile,
-		                          .on_close = on_close_do_stop,
-		                          .signal_log_ctx = { "signal ctx", "95" /* bright magenta */ },
-		                          .log = &ctx.log,
-		                          .udata = &ctx);
+		uuid = ksc_ws_connect_service(js,
+			.on_content = on_content,
+			.on_open = send_get_profile,
+			.on_close = on_close_do_stop,
+			.signal_log_ctx = { "signal ctx", "95" /* bright magenta */ },
+			.log = &ctx.log,
+			.udata = &ctx
+		);
 		r = uuid && *uuid >= 0 ? 0 : 1;
 	} else {
 		fprintf(stderr, "don't know what to do, username but no password\n");

@@ -7,49 +7,10 @@
 #include <assert.h>
 #include <stdarg.h>
 
-struct kjson_value * kjson_get(const struct kjson_value *v, const char *key)
-{
-	assert(v->type == KJSON_VALUE_OBJECT);
-	for (size_t i=0; i<v->o.n; i++)
-		if (!strcmp(v->o.data[i].key.begin, key))
-			return &v->o.data[i].value;
-	return NULL;
-}
-
-struct kjson_value * (kjson_array_push_back)(struct kjson_array *arr,
-                                             struct kjson_value v)
-{
-	/* XXX: inefficient */
-	arr->data = realloc(arr->data, sizeof(*arr->data) * (arr->n+1));
-	struct kjson_value *r = &arr->data[arr->n++];
-	*r = v;
-	return r;
-}
-
-struct kjson_object_entry * (kjson_object_push_back)(struct kjson_object *obj,
-                                                     struct kjson_object_entry v)
-{
-	/* XXX: inefficient */
-	obj->data = realloc(obj->data, sizeof(*obj->data) * (obj->n+1));
-	struct kjson_object_entry *e = &obj->data[obj->n++];
-	*e = v;
-	return e;
-}
-
-void kjson_array_remove(struct kjson_array *arr, struct kjson_value *v)
-{
-	memmove(v, v+1, sizeof(*arr->data) * (--arr->n - (v - arr->data)));
-}
-
-void kjson_object_remove(struct kjson_object *obj, struct kjson_object_entry *e)
-{
-	memmove(e, e+1, sizeof(*obj->data) * (--obj->n - (e - obj->data)));
-}
-
 static const char BASE64_ENC[] =
 	"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
-size_t base64_encode(char *target, const uint8_t *src, size_t len)
+size_t ksc_base64_encode(char *target, const uint8_t *src, size_t len)
 {
 	int r = fio_base64_encode(target, (const char *)src, len);
 	assert(r >= 0);
@@ -65,7 +26,7 @@ static bool base64_decode_char(char c, uint32_t *block)
 	return true;
 }
 
-size_t base64_decode_size(const char *src, size_t len)
+size_t ksc_base64_decode_size(const char *src, size_t len)
 {
 	int padding = (4 - (len % 4)) % 4;
 	if (!padding)
@@ -76,7 +37,7 @@ size_t base64_decode_size(const char *src, size_t len)
 	return 3 * (len + padding) / 4 - padding;
 }
 
-ssize_t base64_decode(uint8_t *target, const char *src, size_t len)
+ssize_t ksc_base64_decode(uint8_t *target, const char *src, size_t len)
 {
 	/* can't use fio_base64_decode() as it seems to be buggy... */
 	uint8_t *tgt = target;
@@ -111,7 +72,7 @@ ssize_t base64_decode(uint8_t *target, const char *src, size_t len)
 }
 
 __attribute__((format(printf,1,2)))
-char * ckprintf(const char *fmt, ...)
+char * ksc_ckprintf(const char *fmt, ...)
 {
 	va_list ap;
 	va_start(ap, fmt);
@@ -182,6 +143,23 @@ static void ksc_log_desc_msg(int fd, enum ksc_log_lvl level,
 	} else {
 		dprintf(fd, "[%-5s] %s: ", lvls[level], desc);
 	}
+}
+
+bool ksc_log_prints(enum ksc_log_lvl lvl,
+                    const struct ksc_log *log,
+                    const struct ksc_log_context *context)
+{
+	if (!log)
+		return true;
+	enum ksc_log_lvl max_lvl = log->max_lvl;
+	if (context && context->desc)
+		for (const struct ksc_log__context_lvl *it = log->context_lvls;
+		     it; it = it->next)
+			if (!strcmp(context->desc, it->desc)) {
+				max_lvl = it->max_lvl;
+				break;
+			}
+	return lvl <= max_lvl;
 }
 
 void ksc_vlog(enum ksc_log_lvl level, struct ksc_log *log,

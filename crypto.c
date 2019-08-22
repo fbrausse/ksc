@@ -33,14 +33,14 @@ static bool verify_envelope(const uint8_t *body, size_t *size_ptr,
 		return false;
 
 	void *ctx;
-	if (crypto_provider.hmac_sha256_init_func(&ctx, mac_key, MAC_KEY_SIZE, NULL))
+	if (ksc_crypto_provider.hmac_sha256_init_func(&ctx, mac_key, MAC_KEY_SIZE, NULL))
 		FAIL(fail, "error on hmac_sha256_init_func\n");
 
-	if (crypto_provider.hmac_sha256_update_func(ctx, body, size - MAC_SIZE, NULL))
+	if (ksc_crypto_provider.hmac_sha256_update_func(ctx, body, size - MAC_SIZE, NULL))
 		FAIL(mac_fail, "error on hmac_sha256_update_func\n");
 
 	signal_buffer *our_mac = NULL;
-	if (crypto_provider.hmac_sha256_final_func(ctx, &our_mac, NULL))
+	if (ksc_crypto_provider.hmac_sha256_final_func(ctx, &our_mac, NULL))
 		FAIL(mac_fail, "error on hmac_sha256_final_func\n");
 
 	assert(our_mac);
@@ -49,15 +49,18 @@ static bool verify_envelope(const uint8_t *body, size_t *size_ptr,
 	if (memcmp(signal_buffer_data(our_mac), their_mac, MAC_SIZE)) {
 		fprintf(stderr, "MACs don't match:\n");
 		fprintf(stderr, "  ours  : ");
-		print_hex(stderr, signal_buffer_data(our_mac), MAC_SIZE);
+		fflush(stderr);
+		ksc_dprint_hex(fileno(stderr), signal_buffer_data(our_mac),
+		               MAC_SIZE);
 		fprintf(stderr, "\n  theirs: ");
-		print_hex(stderr, their_mac, MAC_SIZE);
+		fflush(stderr);
+		ksc_dprint_hex(fileno(stderr), their_mac, MAC_SIZE);
 		fprintf(stderr, "\n");
 		goto mac_fail_2;
 	}
 
 	signal_buffer_free(our_mac);
-	crypto_provider.hmac_sha256_cleanup_func(ctx, NULL);
+	ksc_crypto_provider.hmac_sha256_cleanup_func(ctx, NULL);
 
 	// fprintf(stderr, "MACs match! :)\n");
 
@@ -68,7 +71,7 @@ static bool verify_envelope(const uint8_t *body, size_t *size_ptr,
 mac_fail_2:
 	signal_buffer_free(our_mac);
 mac_fail:
-	crypto_provider.hmac_sha256_cleanup_func(ctx, NULL);
+	ksc_crypto_provider.hmac_sha256_cleanup_func(ctx, NULL);
 fail:
 	return false;
 }
@@ -78,9 +81,9 @@ fail:
  *       CIPHERTEXT    = ENC-AES256(PKCS5PAD(PLAINTEXT), IV, CBC, CIPHER_KEY)
  *       SIGNALING_KEY = CIPHER_KEY MAC_KEY
  */
-bool decrypt_envelope(uint8_t **body_ptr, size_t *size_ptr,
-                      const char *sg_key_b64,
-                      size_t sg_key_b64_len)
+bool ksc_decrypt_envelope(uint8_t **body_ptr, size_t *size_ptr,
+                          const char *sg_key_b64,
+                          size_t sg_key_b64_len)
 {
 	uint8_t *body = *body_ptr;
 	size_t size = *size_ptr;
@@ -92,7 +95,7 @@ bool decrypt_envelope(uint8_t **body_ptr, size_t *size_ptr,
 	assert(sg_key_b64_len >= (4*(CIPHER_KEY_SIZE + MAC_KEY_SIZE) + 2) / 3);
 	assert(sg_key_b64_len <= (4*(CIPHER_KEY_SIZE + MAC_KEY_SIZE + 2)) / 3);
 	uint8_t decoded_key[CIPHER_KEY_SIZE + MAC_KEY_SIZE];
-	ssize_t r = base64_decode(decoded_key, sg_key_b64, sg_key_b64_len);
+	ssize_t r = ksc_base64_decode(decoded_key, sg_key_b64, sg_key_b64_len);
 	if (r != CIPHER_KEY_SIZE + MAC_KEY_SIZE) {
 		fprintf(stderr,
 		        "error decoding signalingKey of length %zu: r: %zd\n",
@@ -112,9 +115,9 @@ bool decrypt_envelope(uint8_t **body_ptr, size_t *size_ptr,
 	uint8_t *iv = body;
 	body += IV_LENGTH;
 	size -= IV_LENGTH;
-	if (crypto_provider.decrypt_func(&plaintext, SG_CIPHER_AES_CBC_PKCS5,
-	                                 cipher_key, CIPHER_KEY_SIZE,
-	                                 iv, IV_LENGTH, body, size, NULL))
+	if (ksc_crypto_provider.decrypt_func(&plaintext,SG_CIPHER_AES_CBC_PKCS5,
+	                                     cipher_key, CIPHER_KEY_SIZE,
+	                                     iv, IV_LENGTH, body, size, NULL))
 		goto fail;
 	*size_ptr = signal_buffer_len(plaintext);
 	memcpy(body, signal_buffer_data(plaintext), *size_ptr);
@@ -125,18 +128,13 @@ fail:
 	return false;
 }
 
-size_t pkcs5_padded_size(size_t size)
+void ksc_pkcs5_pad(uint8_t *body, size_t size)
 {
-	return (size+8) & ~(size_t)7;
-}
-
-void pkcs5_pad(uint8_t *body, size_t size)
-{
-	size_t padded = pkcs5_padded_size(size);
+	size_t padded = ksc_pkcs5_padded_size(size);
 	memset(body + size, padded - size, padded - size);
 }
 
-bool pkcs5_unpad(const uint8_t *restrict body, size_t *restrict size)
+bool ksc_pkcs5_unpad(const uint8_t *restrict body, size_t *restrict size)
 {
 	if (!*size)
 		return false;/*
@@ -155,7 +153,8 @@ bool pkcs5_unpad(const uint8_t *restrict body, size_t *restrict size)
 	return true;
 }
 
-bool one_and_zeroes_unpad(const uint8_t *restrict body, size_t *restrict size)
+bool ksc_one_and_zeroes_unpad(const uint8_t *restrict body,
+                              size_t *restrict size)
 {
 	const uint8_t *restrict begin_pad;
 #ifdef _GNU_SOURCE

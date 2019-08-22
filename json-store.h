@@ -22,7 +22,7 @@ const char * json_store_get_signaling_key_base64(const struct json_store *,
 
 struct signal_protocol_store_context;
 
-void protocol_store_init(struct signal_protocol_store_context *ctx,
-                         struct json_store *st);
+void json_store_protocol_store_init(struct signal_protocol_store_context *ctx,
+                                    struct json_store *st);
 
 #endif

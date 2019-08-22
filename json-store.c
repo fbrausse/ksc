@@ -32,6 +32,51 @@ static const struct ksc_log_context log_ctx = {
 
 #define BUFSIZE		4096
 
+static struct kjson_value * kjson_get(const struct kjson_value *v,
+                                      const char *key)
+{
+	assert(v->type == KJSON_VALUE_OBJECT);
+	for (size_t i=0; i<v->o.n; i++)
+		if (!strcmp(v->o.data[i].key.begin, key))
+			return &v->o.data[i].value;
+	return NULL;
+}
+
+static struct kjson_value * (kjson_array_push_back)(struct kjson_array *arr,
+                                                    struct kjson_value v)
+{
+	/* XXX: inefficient */
+	arr->data = realloc(arr->data, sizeof(*arr->data) * (arr->n+1));
+	struct kjson_value *r = &arr->data[arr->n++];
+	*r = v;
+	return r;
+}
+#define kjson_array_push_back(arr,...) \
+	kjson_array_push_back((arr),(struct kjson_value){ __VA_ARGS__ })
+
+static
+struct kjson_object_entry * (kjson_object_push_back)(struct kjson_object *obj,
+                                                     struct kjson_object_entry v)
+{
+	/* XXX: inefficient */
+	obj->data = realloc(obj->data, sizeof(*obj->data) * (obj->n+1));
+	struct kjson_object_entry *e = &obj->data[obj->n++];
+	*e = v;
+	return e;
+}
+#define kjson_object_push_back(obj,...) \
+	kjson_object_push_back((obj),(struct kjson_object_entry){ __VA_ARGS__ })
+
+static void kjson_array_remove(struct kjson_array *arr, struct kjson_value *v)
+{
+	memmove(v, v+1, sizeof(*arr->data) * (--arr->n - (v - arr->data)));
+}
+
+static void kjson_object_remove(struct kjson_object *obj, struct kjson_object_entry *e)
+{
+	memmove(e, e+1, sizeof(*obj->data) * (--obj->n - (e - obj->data)));
+}
+
 struct json_store {
 	struct kjson_value cfg;
 	int fd;
@@ -253,7 +298,7 @@ fail:
 
 int json_store_save(struct json_store *js)
 {
-	char *tmp = ckprintf("%sXXXXXX", js->path);
+	char *tmp = ksc_ckprintf("%sXXXXXX", js->path);
 	if (!tmp)
 		goto fail;
 	int tfd = mkstemp(tmp);
@@ -366,9 +411,10 @@ static struct kjson_value * sess_store(struct json_store *js)
 static void base64_to_signal_buffer(signal_buffer **buf, struct kjson_value *r)
 {
 	assert(r && r->type == KJSON_VALUE_STRING);
-	size_t n = base64_decode_size(r->s.begin, r->s.len);
+	size_t n = ksc_base64_decode_size(r->s.begin, r->s.len);
 	signal_buffer *b = signal_buffer_alloc(n);
-	ssize_t k = base64_decode(signal_buffer_data(b), r->s.begin, r->s.len);
+	ssize_t k = ksc_base64_decode(signal_buffer_data(b), r->s.begin,
+	                              r->s.len);
 	assert(k >= 0);
 	assert((size_t)k == n);
 	*buf = b;
@@ -475,7 +521,7 @@ static int sess_store_session_func(const signal_protocol_address *address,
 	struct kjson_value *st = sess_store(js);
 	char *record_enc = malloc((record_len + 2) / 3 * 4 + 1);
 	assert(record_enc);
-	ssize_t n = base64_encode(record_enc, record, record_len);
+	ssize_t n = ksc_base64_encode(record_enc, record, record_len);
 	assert(n >= 0);
 	assert((size_t)n == (record_len + 2) / 3 * 4);
 	record_enc[n] = '\0';
@@ -675,7 +721,7 @@ static int prek_store_pre_key(uint32_t pre_key_id, uint8_t *record,
 		return SG_ERR_INVALID_KEY_ID; /* already exists */
 	char *record_enc = malloc((record_len + 2) / 3 * 4 + 1);
 	assert(record_enc);
-	ssize_t n = base64_encode(record_enc, record, record_len);
+	ssize_t n = ksc_base64_encode(record_enc, record, record_len);
 	assert(n >= 0);
 	assert((size_t)n == (record_len + 2) / 3 * 4);
 	record_enc[n] = '\0';
@@ -804,7 +850,7 @@ static int sipk_store_signed_pre_key(uint32_t signed_pre_key_id,
 		return SG_ERR_INVALID_KEY_ID; /* already exists */
 	char *record_enc = malloc((record_len + 2) / 3 * 4 + 1);
 	assert(record_enc);
-	ssize_t n = base64_encode(record_enc, record, record_len);
+	ssize_t n = ksc_base64_encode(record_enc, record, record_len);
 	assert(n >= 0);
 	assert((size_t)n == (record_len + 2) / 3 * 4);
 	record_enc[n] = '\0';
@@ -1017,7 +1063,7 @@ static int idk_save_identity(const signal_protocol_address *address,
 		struct kjson_string record_str = { NULL, 0 };
 		char *record_enc = malloc((key_len + 2) / 3 * 4 + 1);
 		assert(record_enc);
-		ssize_t n = base64_encode(record_enc, key_data, key_len);
+		ssize_t n = ksc_base64_encode(record_enc, key_data, key_len);
 		assert(n >= 0);
 		assert((size_t)n == (key_len + 2) / 3 * 4);
 		record_enc[n] = '\0';
@@ -1111,8 +1157,8 @@ static void idk_destroy_func(void *user_data)
 #define IDK_STORE_LV(json_st) \
 	(signal_protocol_identity_key_store)IDK_STORE_INIT(json_st)
 
-void protocol_store_init(signal_protocol_store_context *c,
-                         struct json_store *s)
+void json_store_protocol_store_init(signal_protocol_store_context *c,
+                                    struct json_store *s)
 {
 	signal_protocol_store_context_set_session_store(c, &SESSION_STORE_LV(s));
 	signal_protocol_store_context_set_pre_key_store(c, &PRE_KEY_STORE_LV(s));

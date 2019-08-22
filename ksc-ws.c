@@ -33,7 +33,7 @@ struct ksignal_ctx {
 	signal_protocol_store_context *psctx;
 	char *url;
 	intptr_t uuid;
-	struct ksc_ws_connect_args args;
+	struct ksc_ws_connect_service_args args;
 	bool reconnecting_during_close;
 	pthread_mutex_t signal_mtx;
 };
@@ -46,7 +46,7 @@ static bool received_message(ws_s *ws, const Signalservice__Envelope *e,
 	printf("decrypted Content:\n");
 	print_hex(stdout, text, size);
 	printf("\n");*/
-	if (!one_and_zeroes_unpad(text, &size)) {
+	if (!ksc_one_and_zeroes_unpad(text, &size)) {
 		LOG(ERROR, "failed to one-and-zeroes-unpad!\n");
 		return false;
 	}
@@ -69,7 +69,7 @@ static bool received_message(ws_s *ws, const Signalservice__Envelope *e,
 	return r;
 }
 
-static int delete_request_on_response(ws_s *ws, struct signal_response *r,
+static int delete_request_on_response(ws_s *ws, struct ksc_signal_response *r,
                                       void *udata)
 {
 	struct ksignal_ctx *ksc = udata;
@@ -88,9 +88,9 @@ static void delete_request(void *udata1, void *udata2)
 {
 	struct delete_request_args *args = udata1;
 	char *path = udata2;
-	signal_ws_send_request(args->ws, "DELETE", path,
-	                       .on_response = delete_request_on_response,
-	                       .udata = args->ksc);
+	ksc_ws_send_request(args->ws, "DELETE", path,
+	                    .on_response = delete_request_on_response,
+	                    .udata = args->ksc);
 	free(path);
 	free(args);
 }
@@ -98,8 +98,8 @@ static void delete_request(void *udata1, void *udata2)
 static char * ack_message_path(const Signalservice__Envelope *e)
 {
 	return e->serverguid
-	       ? ckprintf("/v1/messages/uuid/%s", e->serverguid)
-	       : ckprintf("/v1/messages/%s/%lu", e->source, e->timestamp);
+	       ? ksc_ckprintf("/v1/messages/uuid/%s", e->serverguid)
+	       : ksc_ckprintf("/v1/messages/%s/%lu", e->source, e->timestamp);
 }
 
 static int received_ciphertext(signal_buffer **plaintext, uint8_t *content,
@@ -186,13 +186,14 @@ static bool received_envelope(ws_s *ws, const Signalservice__Envelope *e,
 	}
 	if (!r && plaintext)
 		r = received_message(ws, e, signal_buffer_data(plaintext),
-		                     signal_buffer_len(plaintext), ksc) ? 0 : SG_ERR_UNKNOWN;
+		                     signal_buffer_len(plaintext), ksc)
+		    ? 0 : SG_ERR_UNKNOWN;
 
 	signal_buffer_free(plaintext);
 	return r == 0;
 }
 
-void print_envelope(const Signalservice__Envelope *e, int fd, bool detail)
+void ksc_print_envelope(const Signalservice__Envelope *e, int fd, bool detail)
 {
 	if (e->has_type) {
 		const char *type = NULL;
@@ -280,8 +281,9 @@ static int handle_request(ws_s *ws, char *verb, char *path, uint64_t *id,
 		const char *sg_key_b64 =
 			json_store_get_signaling_key_base64(ksc->js,
 			                                    &sg_key_b64_len);
-		if (is_enc && !decrypt_envelope(&body, &size,
-		                                sg_key_b64, sg_key_b64_len)) {
+		if (is_enc && !ksc_decrypt_envelope(&body, &size,
+		                                    sg_key_b64,
+		                                    sg_key_b64_len)) {
 			LOG(ERROR, "error decrypting envelope\n");
 			return -1;
 		}
@@ -294,8 +296,8 @@ static int handle_request(ws_s *ws, char *verb, char *path, uint64_t *id,
 		LOG(INFO, "received envelope\n");
 		if (ksc_log_prints(KSC_LOG_NOTE, ksc->args.log, &log_ctx)) {
 			int fd = (ksc->args.log ? ksc->args.log : &KSC_DEFAULT_LOG)->fd;
-			print_envelope(e, fd,
-			               ksc_log_prints(KSC_LOG_DEBUG, ksc->args.log, &log_ctx));
+			ksc_print_envelope(e, fd,
+			                   ksc_log_prints(KSC_LOG_DEBUG, ksc->args.log, &log_ctx));
 		}
 		r = received_envelope(ws, e, ksc) ? 0 : -3;
 		signalservice__envelope__free_unpacked(e, NULL);
@@ -345,6 +347,8 @@ static void ctx_lock(void *user_data)
 	struct ksignal_ctx *ksc = user_data;
 	LOG(DEBUG, "ctx_lock()\n");
 	int r = pthread_mutex_lock(&ksc->signal_mtx);
+	assert(!r);
+	(void)r;
 }
 
 static void ctx_unlock(void *user_data)
@@ -352,6 +356,8 @@ static void ctx_unlock(void *user_data)
 	struct ksignal_ctx *ksc = user_data;
 	LOG(DEBUG, "ctx unlock()\n");
 	int r = pthread_mutex_unlock(&ksc->signal_mtx);
+	assert(!r);
+	(void)r;
 }
 
 static struct ksignal_ctx * ksignal_ctx_create(struct json_store *js,
@@ -373,10 +379,10 @@ static struct ksignal_ctx * ksignal_ctx_create(struct json_store *js,
 		goto fail;
 	int32_t device_id;
 	ksc->url = json_store_get_device_id(js, &device_id)
-	         ? ckprintf("%s/v1/websocket/?login=%s.%" PRId32 "&password=%s",
-	                    BASE_URL, number, device_id, password)
-	         : ckprintf("%s/v1/websocket/?login=%s&password=%s",
-	                    BASE_URL, number, password);
+	         ? ksc_ckprintf("%s/v1/websocket/?login=%s.%" PRId32 "&password=%s",
+	                        KSC_BASE_URL, number, device_id, password)
+	         : ksc_ckprintf("%s/v1/websocket/?login=%s&password=%s",
+	                        KSC_BASE_URL, number, password);
 
 	int r = signal_context_create(&ksc->ctx, ksc);
 	if (r) {
@@ -384,7 +390,7 @@ static struct ksignal_ctx * ksignal_ctx_create(struct json_store *js,
 		goto fail;
 	}
 
-	signal_context_set_crypto_provider(ksc->ctx, &crypto_provider);
+	signal_context_set_crypto_provider(ksc->ctx, &ksc_crypto_provider);
 	signal_context_set_log_function(ksc->ctx, ctx_log);
 	signal_context_set_locking_functions(ksc->ctx, ctx_lock, ctx_unlock);
 
@@ -394,7 +400,7 @@ static struct ksignal_ctx * ksignal_ctx_create(struct json_store *js,
 		goto fail;
 	}
 
-	protocol_store_init(ksc->psctx, js);
+	json_store_protocol_store_init(ksc->psctx, js);
 
 	ksc->js = js;
 	return ksc;
@@ -419,7 +425,7 @@ static void on_close(intptr_t uuid, void *udata)
 	if (ksc->args.on_close_do_reconnect) {
 		if (!ksc->reconnecting_during_close) {
 			ksc->reconnecting_during_close = true;
-			ksc->uuid = signal_ws_connect(ksc->url,
+			ksc->uuid = ksc_ws_connect_raw(ksc->url,
 				.on_open = on_open,
 				.handle_request = handle_request,
 				.handle_response = NULL,
@@ -442,8 +448,8 @@ static void on_shutdown(ws_s *s, void *udata)
 	(void)s;
 }
 
-intptr_t * (ksc_ws_connect)(struct json_store *js,
-                            struct ksc_ws_connect_args args)
+intptr_t * (ksc_ws_connect_service)(struct json_store *js,
+                                    struct ksc_ws_connect_service_args args)
 {
 	struct ksignal_ctx *ksc = ksignal_ctx_create(js, args.log);
 	if (!ksc) {
@@ -451,7 +457,7 @@ intptr_t * (ksc_ws_connect)(struct json_store *js,
 		return NULL;
 	}
 	ksc->args = args;
-	ksc->uuid = signal_ws_connect(ksc->url,
+	ksc->uuid = ksc_ws_connect_raw(ksc->url,
 		.on_open = on_open,
 		.handle_request = handle_request,
 		.handle_response = NULL,

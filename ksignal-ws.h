@@ -10,9 +10,9 @@
 
 #define KSIGNAL_UNKNOWN_WS_PROTOBUF_ERR	(-0x73001)
 
-extern const char BASE_URL[];
+extern const char *const KSC_BASE_URL;
 
-struct signal_response {
+struct ksc_signal_response {
 	uint32_t status;
 	char *message;
 	size_t n_headers;
@@ -20,27 +20,28 @@ struct signal_response {
 	fio_str_info_s body;
 };
 
-struct _signal_ws_send_request {
+struct ksc_ws_send_request_args {
 	uint64_t *id;
 	size_t n_headers;
 	char **headers;
 	size_t size;
 	char *body;
 	/* 0: to unsubscribe, other to stay subscribed */
-	int (*on_response)(ws_s *ws, struct signal_response *response, void *udata);
+	int (*on_response)(ws_s *ws, struct ksc_signal_response *response,
+	                   void *udata);
 	void (*on_unsubscribe)(void *udata);
 	void *udata;
 };
 
-int signal_ws_send_request(ws_s *s, char *verb, char *path,
-                           struct _signal_ws_send_request args);
-#define signal_ws_send_request(s, verb, path, ...) \
-	signal_ws_send_request((s), (verb), (path), \
-	                       (struct _signal_ws_send_request){ __VA_ARGS__ })
-int signal_ws_send_response(ws_s *s, int status, char *message, uint64_t *id);
+int ksc_ws_send_request(ws_s *s, char *verb, char *path,
+                           struct ksc_ws_send_request_args args);
+#define ksc_ws_send_request(s, verb, path, ...) \
+	ksc_ws_send_request((s), (verb), (path), \
+	                    (struct ksc_ws_send_request_args){ __VA_ARGS__ })
+int ksc_ws_send_response(ws_s *s, int status, char *message, uint64_t *id);
 
 
-struct signal_ws_connect_args {
+struct ksc_ws_connect_raw_args {
 	void (*on_open)(ws_s *s, void *udata);
 	void (*on_ready)(ws_s *s, void *udata);
 	/* return < 0 on error, status code > 0 for sending a reply and 0 for not replying */
@@ -58,10 +59,9 @@ struct signal_ws_connect_args {
 	void *udata;
 };
 
-intptr_t signal_ws_connect(const char *url, struct signal_ws_connect_args h);
-#define signal_ws_connect(url,...) \
-	signal_ws_connect((url), (struct signal_ws_connect_args){ __VA_ARGS__ })
-
-fio_tls_s * signal_tls(const char *cert_path);
+intptr_t ksc_ws_connect_raw(const char *url, struct ksc_ws_connect_raw_args h);
+#define ksc_ws_connect_raw(url,...) \
+	ksc_ws_connect_raw((url), \
+	                   (struct ksc_ws_connect_raw_args){ __VA_ARGS__ })
 
 #endif

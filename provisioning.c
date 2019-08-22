@@ -4,12 +4,12 @@
 #include "utils.h"
 #include "Provisioning.pb-c.h"
 
-static int _provisioning_handle_request(ws_s *ws, char *verb, char *path, uint64_t *id,
-                                        size_t n_headers, char **headers,
-                                        size_t size, uint8_t *body,
-                                        void *udata)
+static int handle_request(ws_s *ws, char *verb, char *path, uint64_t *id,
+                          size_t n_headers, char **headers,
+                          size_t size, uint8_t *body,
+                          void *udata)
 {
-	struct provisioning_sock *ps = udata;
+	struct ksc_defer_get_new_uuid_args *ps = udata;
 	if (!strcmp(path, "/v1/address")) {
 		Signalservice__ProvisioningUuid *uuid_msg =
 			signalservice__provisioning_uuid__unpack(NULL, size, body);
@@ -29,25 +29,25 @@ static int _provisioning_handle_request(ws_s *ws, char *verb, char *path, uint64
 	(void)headers;
 }
 
-static void _provisioning_on_close(intptr_t uuid, void *udata)
+static void on_close(intptr_t uuid, void *udata)
 {
 	printf("provisioning ws close\n");
-	struct provisioning_sock *h = udata;
+	struct ksc_defer_get_new_uuid_args *h = udata;
 	if (h && h->on_close)
 		h->on_close(uuid, h->udata);
 	free(h);
 }
 
-intptr_t (ksignal_defer_get_new_uuid)(const char *base_url,
-                                      struct provisioning_sock ps)
+intptr_t (ksc_defer_get_new_uuid)(const char *base_url,
+                                  struct ksc_defer_get_new_uuid_args ps)
 {
-	char *url = ckprintf("%s/v1/websocket/provisioning/", base_url);
-	intptr_t r = signal_ws_connect(url,
+	char *url = ksc_ckprintf("%s/v1/websocket/provisioning/", base_url);
+	intptr_t r = ksc_ws_connect_raw(url,
 		.on_open = NULL, /* nothing to do, server will send first request */
-		.handle_request = _provisioning_handle_request,
+		.handle_request = handle_request,
 		.on_ready = NULL, /* TODO: reply to request */
 		.on_shutdown = NULL, /* nothing to do */
-		.on_close = _provisioning_on_close, /* TODO: signal this method to return? */
+		.on_close = on_close, /* TODO: signal this method to return? */
 		.udata = memdup(&ps, sizeof(ps)),
 	);
 	free(url);

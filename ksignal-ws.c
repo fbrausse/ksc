@@ -19,11 +19,11 @@ static const struct ksc_log_context log_ctx = {
 #define LOG_(level,...)		LOGL_(level, h->log, __VA_ARGS__)
 #define LOG(lvl,...)		LOGL(lvl, h->log, __VA_ARGS__)
 
-const char BASE_URL[] = "wss://textsecure-service.whispersystems.org:443";
+const char *const KSC_BASE_URL = "wss://textsecure-service.whispersystems.org:443";
 
 static int signal_ws_send(ws_s *s, ProtobufCMessage *request_or_response)
 {
-	struct signal_ws_connect_args *h = websocket_udata_get(s);
+	struct ksc_ws_connect_raw_args *h = websocket_udata_get(s);
 	Signalservice__WebSocketMessage ws_msg =
 		SIGNALSERVICE__WEB_SOCKET_MESSAGE__INIT;
 	if (request_or_response->descriptor ==
@@ -71,7 +71,8 @@ static int signal_ws_send(ws_s *s, ProtobufCMessage *request_or_response)
 }
 
 struct requested_subscription {
-	int (*on_response)(ws_s *ws, struct signal_response *r, void *udata);
+	int (*on_response)(ws_s *ws, struct ksc_signal_response *r,
+	                   void *udata);
 	void (*on_unsubscribe)(void *udata);
 	subscription_s *subs;
 	uint64_t id;
@@ -107,7 +108,7 @@ static void _on_requested_message(fio_msg_s *msg)
 	resp = signalservice__web_socket_response_message__unpack(NULL, m->len,
 	                                                          (uint8_t *)m->data);
 	assert(resp);
-	struct signal_response r = {
+	struct ksc_signal_response r = {
 		.status = resp->has_status ? resp->status : ~0U,
 		.message = resp->message,
 		.body = {
@@ -130,8 +131,8 @@ static void _on_requested_unsubscribe(void *udata1, void *udata2)
 	free(s);
 }
 
-int (signal_ws_send_request)(ws_s *s, char *verb, char *path,
-                             struct _signal_ws_send_request args)
+int (ksc_ws_send_request)(ws_s *s, char *verb, char *path,
+                          struct ksc_ws_send_request_args args)
 {
 	struct requested_subscription *p = NULL;
 	uint64_t ptr;
@@ -172,7 +173,7 @@ int (signal_ws_send_request)(ws_s *s, char *verb, char *path,
 	return signal_ws_send(s, &req.base);
 }
 
-int signal_ws_send_response(ws_s *s, int status, char *message, uint64_t *id)
+int ksc_ws_send_response(ws_s *s, int status, char *message, uint64_t *id)
 {
 	Signalservice__WebSocketResponseMessage res =
 		SIGNALSERVICE__WEB_SOCKET_RESPONSE_MESSAGE__INIT;
@@ -188,7 +189,7 @@ int signal_ws_send_response(ws_s *s, int status, char *message, uint64_t *id)
 
 static void _on_ws_request(ws_s *s,
                            Signalservice__WebSocketRequestMessage *request,
-                           struct signal_ws_connect_args *h)
+                           struct ksc_ws_connect_raw_args *h)
 {
 	if (ksc_log_prints(KSC_LOG_NOTE, h->log, &log_ctx)) {
 		LOG(NOTE, "ws request: %s %s\n", request->verb, request->path);
@@ -209,16 +210,16 @@ static void _on_ws_request(ws_s *s,
 		                      request->has_body ? request->body.data : NULL,
 		                      h->udata);
 	if (r > 0)
-		signal_ws_send_response(s, 200, "OK",
-		                        request->has_id ? &request->id : NULL);
+		ksc_ws_send_response(s, 200, "OK",
+		                     request->has_id ? &request->id : NULL);
 	else if (r < 0)
-		signal_ws_send_response(s, 400, "Unknown",
-		                        request->has_id ? &request->id : NULL);
+		ksc_ws_send_response(s, 400, "Unknown",
+		                     request->has_id ? &request->id : NULL);
 }
 
 static void _on_ws_response(ws_s *s,
                             Signalservice__WebSocketResponseMessage *response,
-                            struct signal_ws_connect_args *h, char *scratch)
+                            struct ksc_ws_connect_raw_args *h, char *scratch)
 {
 	if (ksc_log_prints(KSC_LOG_NOTE, h->log, &log_ctx)) {
 		LOG(NOTE, "ws response, status: ");
@@ -253,7 +254,7 @@ static void _on_ws_response(ws_s *s,
 
 static void _signal_ws_on_message(ws_s *ws, fio_str_info_s msg, uint8_t is_text)
 {
-	struct signal_ws_connect_args *h = websocket_udata_get(ws);
+	struct ksc_ws_connect_raw_args *h = websocket_udata_get(ws);
 	LOG(DEBUG, "ws received %s message of length %zu\n",
 	    is_text ? "text" : "binary", msg.len);
 	Signalservice__WebSocketMessage *ws_msg =
@@ -288,10 +289,11 @@ static void _signal_ws_run_timed_keepalive(ws_s *s)
 	assert(r != -1);
 }
 
-static int _signal_ws_keepalive_on_response(ws_s *s, struct signal_response *r,
+static int _signal_ws_keepalive_on_response(ws_s *s,
+                                            struct ksc_signal_response *r,
                                             void *udata)
 {
-	struct signal_ws_connect_args *h = websocket_udata_get(s);
+	struct ksc_ws_connect_raw_args *h = websocket_udata_get(s);
 	if (200 <= r->status && r->status < 300)
 		_signal_ws_run_timed_keepalive(s);
 	else
@@ -304,17 +306,17 @@ static int _signal_ws_keepalive_on_response(ws_s *s, struct signal_response *r,
 static void _signal_ws_keepalive(void *udata)
 {
 	ws_s *s = udata;
-	struct signal_ws_connect_args *h = websocket_udata_get(s);
+	struct ksc_ws_connect_raw_args *h = websocket_udata_get(s);
 	LOG(DEBUG, "sending keep-alive\n");
-	int r = signal_ws_send_request(s, "GET", "/v1/keepalive",
-	                               .on_response = _signal_ws_keepalive_on_response);
+	int r = ksc_ws_send_request(s, "GET", "/v1/keepalive",
+	                            .on_response = _signal_ws_keepalive_on_response);
 	if (r == -1)
 		LOG(ERROR, "sending keep-alive failed\n");
 }
 
 static void _signal_ws_on_open(ws_s *s)
 {
-	struct signal_ws_connect_args *h = websocket_udata_get(s);
+	struct ksc_ws_connect_raw_args *h = websocket_udata_get(s);
 	LOG(DEBUG, "signal_ws_open\n");
 	_signal_ws_run_timed_keepalive(s);
 	if (h && h->on_open)
@@ -323,7 +325,7 @@ static void _signal_ws_on_open(ws_s *s)
 
 static void _signal_ws_on_shutdown(ws_s *s)
 {
-	struct signal_ws_connect_args *h = websocket_udata_get(s);
+	struct ksc_ws_connect_raw_args *h = websocket_udata_get(s);
 	LOG(DEBUG, "signal_ws_shutdown\n");
 	if (h && h->on_shutdown)
 		h->on_shutdown(s, h->udata);
@@ -331,7 +333,7 @@ static void _signal_ws_on_shutdown(ws_s *s)
 
 static void _signal_ws_on_ready(ws_s *s)
 {
-	struct signal_ws_connect_args *h = websocket_udata_get(s);
+	struct ksc_ws_connect_raw_args *h = websocket_udata_get(s);
 	LOG(DEBUG, "signal_ws_ready\n");
 	if (h && h->on_ready)
 		h->on_ready(s, h->udata);
@@ -339,7 +341,7 @@ static void _signal_ws_on_ready(ws_s *s)
 
 static void _signal_ws_on_close(intptr_t uuid, void *udata)
 {
-	struct signal_ws_connect_args *h = udata;
+	struct ksc_ws_connect_raw_args *h = udata;
 	LOG(DEBUG, "signal_ws_close\n");
 	if (h && h->on_close)
 		h->on_close(uuid, h->udata);
@@ -348,7 +350,7 @@ static void _signal_ws_on_close(intptr_t uuid, void *udata)
 
 static void _on_websocket_http_connected(http_s *h) {
   websocket_settings_s *s = h->udata;
-  struct signal_ws_connect_args *hh = s->udata;
+  struct ksc_ws_connect_raw_args *hh = s->udata;
   LOGL(DEBUG, hh->log, "on_websocket_http_connected\n");
   h->udata = http_settings(h)->udata = NULL;
   if (!h->path) {
@@ -368,7 +370,7 @@ static void _on_websocket_http_connected(http_s *h) {
 static void _on_websocket_http_connection_finished(http_settings_s *settings) {
   websocket_settings_s *s = settings->udata;
   if (s) {
-    struct signal_ws_connect_args *hh = s->udata;
+    struct ksc_ws_connect_raw_args *hh = s->udata;
     LOGL(DEBUG, hh->log, "on_websocket_http_connection_finished\n");
     if (s->on_close)
       s->on_close(0, s->udata);
@@ -377,7 +379,7 @@ static void _on_websocket_http_connection_finished(http_settings_s *settings) {
     KSC_DEBUG(DEBUG, "on_websocket_http_connection_finished\n");
 }
 
-fio_tls_s * signal_tls(const char *cert_path)
+static fio_tls_s * signal_tls(const char *cert_path)
 {
 	// fio_tls_s *tls = fio_tls_new("textsecure-service.whispersystems.org", NULL, NULL, NULL);
 	fio_tls_s *tls = fio_tls_new(NULL, NULL, NULL, NULL);
@@ -388,7 +390,7 @@ fio_tls_s * signal_tls(const char *cert_path)
 }
 
 #ifdef KSIGNAL_SERVER_CERT
-intptr_t (signal_ws_connect)(const char *url, struct signal_ws_connect_args h)
+intptr_t (ksc_ws_connect_raw)(const char *url, struct ksc_ws_connect_raw_args h)
 {
 	LOGL(NOTE, h.log, "signal ws connect to %s\n", url);
 	websocket_settings_s *ws_settings = malloc(sizeof(websocket_settings_s));

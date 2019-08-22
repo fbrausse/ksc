@@ -61,7 +61,7 @@ static void hmac_sha256_cleanup_func(void *hmac_context, void *user_data)
 }
 
 /* as per the axolotl testcases */
-const EVP_CIPHER * choose_aes_cipher(int cipher, size_t key_len)
+static const EVP_CIPHER * choose_aes_cipher(int cipher, size_t key_len)
 {
 	switch (cipher) {
 	case SG_CIPHER_AES_CBC_PKCS5:
@@ -149,7 +149,7 @@ cleanup:
 	(void)user_data;
 }
 
-signal_crypto_provider __attribute__((weak)) crypto_provider = {
+signal_crypto_provider __attribute__((weak)) ksc_crypto_provider = {
 	.random_func              = random_func,
 	.hmac_sha256_init_func    = hmac_sha256_init_func,
 	.hmac_sha256_update_func  = hmac_sha256_update_func,
