@@ -30,6 +30,7 @@ override CPPFLAGS += \
 
 override CLDFLAGS := \
 	$(CSTD) \
+	-pthread \
 	$(OPTS) \
 	$(CLDFLAGS)
 

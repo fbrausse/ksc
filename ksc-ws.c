@@ -2,6 +2,8 @@
 #include "ksc-ws.h"
 #include "crypto.h"
 
+#include <pthread.h>
+
 #include <signal/protocol.h>
 #include <signal/signal_protocol.h>
 #include <signal/session_cipher.h>
@@ -33,6 +35,7 @@ struct ksignal_ctx {
 	intptr_t uuid;
 	struct ksc_ws_connect_args args;
 	bool reconnecting_during_close;
+	pthread_mutex_t signal_mtx;
 };
 
 static bool received_message(ws_s *ws, const Signalservice__Envelope *e,
@@ -308,6 +311,7 @@ static void ksignal_ctx_destroy(struct ksignal_ctx *ksc)
 	if (ksc->ctx)
 		signal_context_destroy(ksc->ctx);
 	free(ksc->url);
+	pthread_mutex_destroy(&ksc->signal_mtx);
 	free(ksc);
 }
 
@@ -336,12 +340,32 @@ static void ctx_log(int level, const char *message, size_t len, void *user_data)
 	}
 }
 
+static void ctx_lock(void *user_data)
+{
+	struct ksignal_ctx *ksc = user_data;
+	LOG(DEBUG, "ctx_lock()\n");
+	int r = pthread_mutex_lock(&ksc->signal_mtx);
+}
+
+static void ctx_unlock(void *user_data)
+{
+	struct ksignal_ctx *ksc = user_data;
+	LOG(DEBUG, "ctx unlock()\n");
+	int r = pthread_mutex_unlock(&ksc->signal_mtx);
+}
+
 static struct ksignal_ctx * ksignal_ctx_create(struct json_store *js,
                                                struct ksc_log *log)
 {
 	struct ksignal_ctx *ksc = NULL;
 
 	ksc = calloc(1, sizeof(*ksc));
+
+	pthread_mutexattr_t attr;
+	pthread_mutexattr_init(&attr);
+	pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_RECURSIVE);
+	pthread_mutex_init(&ksc->signal_mtx, &attr);
+	pthread_mutexattr_destroy(&attr);
 
 	const char *number = json_store_get_username(js);
 	const char *password = json_store_get_password_base64(js);
@@ -362,6 +386,7 @@ static struct ksignal_ctx * ksignal_ctx_create(struct json_store *js,
 
 	signal_context_set_crypto_provider(ksc->ctx, &crypto_provider);
 	signal_context_set_log_function(ksc->ctx, ctx_log);
+	signal_context_set_locking_functions(ksc->ctx, ctx_lock, ctx_unlock);
 
 	r = signal_protocol_store_context_create(&ksc->psctx, ksc->ctx);
 	if (r) {

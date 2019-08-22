@@ -332,7 +332,7 @@ int main(int argc, char **argv)
 		fprintf(stderr, "don't know what to do, username but no password\n");
 		r = 1;
 	}
-	KSC_LOG(DEBUG,&ctx.log,, "init: %d\n", r);
+	LOGL(DEBUG, &ctx.log, "init: %d\n", r);
 
 	fio_start(.threads=1);
 
