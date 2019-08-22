@@ -219,15 +219,50 @@ struct ksc_ctx {
 # define DEFAULT_CLI_CONFIG	NULL
 #endif
 
+static bool parse_v_lvl(const char *lvl, enum ksc_log_lvl *res)
+{
+	char *endptr;
+	long v = strtol(lvl, &endptr, 0);
+	if (endptr == lvl)
+		return ksc_log_lvl_parse(lvl, res);
+	if (v < KSC_LOG_NONE || v > INT_MAX)
+		return false;
+	*res = v;
+	return true;
+}
+
+static bool parse_v(char *arg, struct ksc_log *log)
+{
+	char *colon = strchr(arg, ':');
+	if (!colon)
+		return parse_v_lvl(arg, &log->max_lvl);
+	enum ksc_log_lvl lvl;
+	if (!parse_v_lvl(colon+1, &lvl))
+		return false;
+	struct ksc_log__context_lvl *it;
+	it = malloc(sizeof(*it));
+	it->max_lvl = lvl;
+	*colon = '\0';
+	it->desc = arg;
+	it->next = log->context_lvls;
+	log->context_lvls = it;
+	return true;
+}
+
 int main(int argc, char **argv)
 {
+	struct ksc_log log = KSC_DEFAULT_LOG;
 	const char *cli_path = DEFAULT_CLI_CONFIG;
-	for (int opt; (opt = getopt(argc, argv, ":hp:")) != -1;)
+	for (int opt; (opt = getopt(argc, argv, ":hp:v:")) != -1;)
 		switch (opt) {
 		case 'h':
-			fprintf(stderr, "usage: %s [-p CLI_CONFIG_PATH]\n", argv[0]);
+			fprintf(stderr, "usage: %s [-p CLI_CONFIG_PATH] [-v ARG]\n", argv[0]);
 			exit(0);
 		case 'p': cli_path = optarg; break;
+		case 'v':
+			if (!parse_v(optarg, &log))
+				DIE(1,"error parsing option '-v %s'\n", optarg);
+			break;
 		case ':': DIE(1,"error: option '-%c' requires a parameter\n",
 		              optopt);
 		case '?': DIE(1,"error: unknown option '-%c'\n",optopt);
@@ -238,8 +273,11 @@ int main(int argc, char **argv)
 		return 1;
 	}
 
+	struct ksc_ctx ctx = {
+		.log = log,
+	};
 	struct json_store *js = NULL;
-	js = json_store_create(cli_path);
+	js = json_store_create(cli_path, &ctx.log);
 	printf("js: %p\n", (void *)js);
 	if (!js) {
 		fprintf(stderr, "%s: error reading JSON config file\n", cli_path);
@@ -248,9 +286,6 @@ int main(int argc, char **argv)
 
 	int r = 0;
 
-	struct ksc_ctx ctx = {
-		.log = { INT_MAX, STDERR_FILENO, },
-	};
 	const char *number = json_store_get_username(js);
 	const char *password = json_store_get_password_base64(js);
 	if (!number) {

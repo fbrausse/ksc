@@ -134,6 +134,28 @@ void ksc_dprint_hex(int fd, const uint8_t *buf, size_t size)
 		        i+1 < size ? " " : "");
 }
 
+static const char *const lvls[] = {
+	[KSC_LOG_ERROR] = "error",
+	[KSC_LOG_WARN ] = "warn",
+	[KSC_LOG_INFO ] = "info",
+	[KSC_LOG_NOTE ] = "note",
+	[KSC_LOG_DEBUG] = "debug",
+};
+
+bool ksc_log_lvl_parse(const char *lvl, enum ksc_log_lvl *res)
+{
+	if (!strcmp(lvl, "none")) {
+		*res = KSC_LOG_NONE;
+		return true;
+	}
+	for (size_t i=0; i<ARRAY_SIZE(lvls); i++)
+		if (lvls[i] && !strcmp(lvl, lvls[i])) {
+			*res = i;
+			return true;
+		}
+	return false;
+}
+
 static void ksc_log_desc_msg(int fd, enum ksc_log_lvl level,
                              const struct ksc_log_context *context)
 {
@@ -146,13 +168,6 @@ static void ksc_log_desc_msg(int fd, enum ksc_log_lvl level,
 		[KSC_LOG_DEBUG] =      "92", /* bright green */
 	};
 #undef BOLD
-	static const char *const lvls[] = {
-		[KSC_LOG_ERROR] = "error",
-		[KSC_LOG_WARN ] = "warn ",
-		[KSC_LOG_INFO ] = "info ",
-		[KSC_LOG_NOTE ] = "note ",
-		[KSC_LOG_DEBUG] = "debug",
-	};
 	level = MIN(level,ARRAY_SIZE(lvls)-1);
 	const char *desc = context && context->desc ? context->desc : "";
 	if (isatty(fd)) {
@@ -160,12 +175,12 @@ static void ksc_log_desc_msg(int fd, enum ksc_log_lvl level,
 		color = context && context->color ? context->color : "0";
 /* VT100 color escape sequence */
 #define COLOR "\x1b[%sm"
-		dprintf(fd, COLOR "[%s]" COLOR " " COLOR "%s" COLOR ": ",
+		dprintf(fd, COLOR "[%-5s]" COLOR " " COLOR "%s" COLOR ": ",
 		        colors[level], lvls[level], "0",
 		        color, desc, "0");
 #undef COLOR
 	} else {
-		dprintf(fd, "[%s] %s: ", lvls[level], desc);
+		dprintf(fd, "[%-5s] %s: ", lvls[level], desc);
 	}
 }
 
@@ -173,14 +188,14 @@ void ksc_vlog(enum ksc_log_lvl level, struct ksc_log *log,
               const struct ksc_log_context *context, const char *fmt,
               va_list ap)
 {
-	static struct ksc_log default_log = { INT_MAX, STDERR_FILENO };
+	static struct ksc_log default_log = KSC_DEFAULT_LOG;
+
+	if (!ksc_log_prints(level, log, context))
+		return;
 
 	level = MAX(KSC_LOG_ERROR, level);
 	if (!log)
 		log = &default_log;
-
-	if (level > log->max_lvl)
-		return;
 
 	ksc_log_desc_msg(log->fd, level, context);
 	vdprintf(log->fd, fmt, ap);

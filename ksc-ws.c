@@ -47,7 +47,7 @@ static bool received_message(ws_s *ws, const Signalservice__Envelope *e,
 		LOG(ERROR, "failed to one-and-zeroes-unpad!\n");
 		return false;
 	}
-	if (ksc_log_prints(KSC_LOG_DEBUG, ksc->args.log)) {
+	if (ksc_log_prints(KSC_LOG_DEBUG, ksc->args.log, &log_ctx)) {
 		int fd = (ksc->args.log ? ksc->args.log : &KSC_DEFAULT_LOG)->fd;
 		LOG(DEBUG, "decrypted Content (len: %zu): ", size);
 		ksc_dprint_hex(fd, text, size);
@@ -272,7 +272,7 @@ static int handle_request(ws_s *ws, char *verb, char *path, uint64_t *id,
 			return -2;
 		}
 		LOG(INFO, "received envelope\n");
-		if (ksc_log_prints(KSC_LOG_NOTE, ksc->args.log))
+		if (ksc_log_prints(KSC_LOG_NOTE, ksc->args.log, &log_ctx))
 			print_envelope(e, (ksc->args.log ? ksc->args.log : &KSC_DEFAULT_LOG)->fd);
 		r = received_envelope(ws, e, ksc) ? 0 : -3;
 		signalservice__envelope__free_unpacked(e, NULL);
@@ -413,6 +413,7 @@ intptr_t * (ksc_ws_connect)(struct json_store *js,
 		.udata = ksc,
 		.on_close = on_close,
 		.on_shutdown = on_shutdown,
+		.log = args.log,
 	);
 	return &ksc->uuid;
 }

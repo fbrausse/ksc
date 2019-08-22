@@ -90,23 +90,41 @@ enum ksc_log_lvl {
 	KSC_LOG_DEBUG,
 };
 
+bool ksc_log_lvl_parse(const char *lvl, enum ksc_log_lvl *res);
+
 struct ksc_log {
 	enum ksc_log_lvl max_lvl;
 	int fd;
+	struct ksc_log__context_lvl {
+		struct ksc_log__context_lvl *next;
+		const char *desc;
+		enum ksc_log_lvl max_lvl;
+	} *context_lvls;
 };
 
-#define KSC_DEFAULT_LOG	(struct ksc_log){ INT_MAX, STDERR_FILENO }
-
-static inline bool ksc_log_prints(enum ksc_log_lvl lvl,
-                                  const struct ksc_log *log)
-{
-	return !log || lvl <= log->max_lvl;
-}
+#define KSC_DEFAULT_LOG	(struct ksc_log){ INT_MAX, STDERR_FILENO, NULL }
 
 struct ksc_log_context {
 	const char *desc;
 	const char *color;
 };
+
+static inline bool ksc_log_prints(enum ksc_log_lvl lvl,
+                                  const struct ksc_log *log,
+                                  const struct ksc_log_context *context)
+{
+	if (!log)
+		return true;
+	enum ksc_log_lvl max_lvl = log->max_lvl;
+	if (context && context->desc)
+		for (const struct ksc_log__context_lvl *it = log->context_lvls;
+		     it; it = it->next)
+			if (!strcmp(context->desc, it->desc)) {
+				max_lvl = it->max_lvl;
+				break;
+			}
+	return lvl <= max_lvl;
+}
 
 void ksc_vlog(enum ksc_log_lvl level, struct ksc_log *log,
               const struct ksc_log_context *context, const char *fmt,
@@ -128,7 +146,7 @@ void ksc_log(enum ksc_log_lvl level, struct ksc_log *log,
 
 #define KSC_DEBUG(lvl, ...) \
 	KSC_LOG(lvl, \
-	        (&(struct ksc_log){ INT_MAX, STDERR_FILENO }), \
+	        (&KSC_DEFAULT_LOG), \
 	        (&(struct ksc_log_context){ __FILE__ ":" KSC_XSTR(__LINE__), "92" }), \
 	        __VA_ARGS__)
 

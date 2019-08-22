@@ -31,7 +31,7 @@ static int signal_ws_send(ws_s *s, ProtobufCMessage *request_or_response)
 		ws_msg.has_type = true;
 		ws_msg.type = SIGNALSERVICE__WEB_SOCKET_MESSAGE__TYPE__REQUEST;
 		ws_msg.request = (Signalservice__WebSocketRequestMessage *)request_or_response;
-		if (ksc_log_prints(KSC_LOG_NOTE, h->log)) {
+		if (ksc_log_prints(KSC_LOG_NOTE, h->log, &log_ctx)) {
 			LOG(NOTE, "sending request ws message: %s %s",
 			    ws_msg.request->verb, ws_msg.request->path);
 			int fd = (h->log ? h->log : &KSC_DEFAULT_LOG)->fd;
@@ -44,7 +44,7 @@ static int signal_ws_send(ws_s *s, ProtobufCMessage *request_or_response)
 		ws_msg.has_type = true;
 		ws_msg.type = SIGNALSERVICE__WEB_SOCKET_MESSAGE__TYPE__REQUEST;
 		ws_msg.response = (Signalservice__WebSocketResponseMessage *)request_or_response;
-		if (ksc_log_prints(KSC_LOG_NOTE, h->log)) {
+		if (ksc_log_prints(KSC_LOG_NOTE, h->log, &log_ctx)) {
 			LOG(NOTE, "sending response ws message: %d %s",
 			    ws_msg.response->has_status ? ws_msg.response->status : -1U,
 			    ws_msg.response->message);
@@ -190,7 +190,7 @@ static void _on_ws_request(ws_s *s,
                            Signalservice__WebSocketRequestMessage *request,
                            struct signal_ws_connect_args *h)
 {
-	if (ksc_log_prints(KSC_LOG_NOTE, h->log)) {
+	if (ksc_log_prints(KSC_LOG_NOTE, h->log, &log_ctx)) {
 		LOG(NOTE, "ws request: %s %s\n", request->verb, request->path);
 		int fd = (h->log ? h->log : &KSC_DEFAULT_LOG)->fd;
 		for (size_t i=0; i<request->n_headers; i++)
@@ -220,7 +220,7 @@ static void _on_ws_response(ws_s *s,
                             Signalservice__WebSocketResponseMessage *response,
                             struct signal_ws_connect_args *h, char *scratch)
 {
-	if (ksc_log_prints(KSC_LOG_NOTE, h->log)) {
+	if (ksc_log_prints(KSC_LOG_NOTE, h->log, &log_ctx)) {
 		LOG(NOTE, "ws response, status: ");
 		int fd = (h->log ? h->log : &KSC_DEFAULT_LOG)->fd;
 		if (response->has_status)

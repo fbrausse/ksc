@@ -19,6 +19,17 @@
 #include <fcntl.h>	/* open() */
 #include <unistd.h>	/* lockf() */
 
+static const struct ksc_log_context log_ctx = {
+	.desc = "json-store",
+	.color = "31",
+};
+
+/* shortcuts */
+#define LOGL_(level,log,...)	KSC_LOG_(level, log, &log_ctx, __VA_ARGS__)
+#define LOGL(lvl,log,...)	KSC_LOG(lvl, log, &log_ctx, __VA_ARGS__)
+#define LOG_(level,...)		LOGL_(level, js->log, __VA_ARGS__)
+#define LOG(lvl,...)		LOGL(lvl, js->log, __VA_ARGS__)
+
 #define BUFSIZE		4096
 
 struct json_store {
@@ -28,6 +39,7 @@ struct json_store {
 	size_t data_sz;
 	int fd;
 	char *path;
+	struct ksc_log *log;
 };
 
 static char * json_store_alloc(struct json_store *js, size_t n)
@@ -145,31 +157,32 @@ void json_store_destroy(struct json_store *js)
 	free(js);
 }
 
-struct json_store * json_store_create(const char *path)
+struct json_store * json_store_create(const char *path, struct ksc_log *log)
 {
 	struct json_store *js = NULL;
 	int fd = open(path, O_RDWR | O_CLOEXEC | O_CREAT, S_IRUSR | S_IWUSR);
 	if (fd == -1) {
-		perror("open");
+		LOGL(ERROR, log, "%s: open: %s\n", path, strerror(errno));
 		return NULL;
 	}
 	if (lockf(fd, F_TLOCK, 0) == -1) {
-		perror("lockf");
+		LOGL(ERROR, log, "%s: lockf: %s\n", path, strerror(errno));
 		goto fail;
 	}
 	js = calloc(1, sizeof(struct json_store));
 	if (!js) {
-		perror("calloc");
+		LOGL(ERROR, log, "calloc: %s\n", strerror(errno));
 		goto fail;
 	}
 	js->fd = fd;
+	js->log = log;
 	js->path = strdup(path);
 	if (!js->path) {
-		perror("strdup");
+		LOG(ERROR, "strdup: %s\n", strerror(errno));
 		goto fail_1;
 	}
 	if (!json_store_load(js)) {
-		fprintf(stderr, "json_store_load: failed\n");
+		LOG(ERROR, "json_store_load: failed\n");
 		json_store_destroy(js);
 		js = NULL;
 	}
@@ -310,7 +323,7 @@ static int sess_load_session_func(signal_buffer **record,
                                   const signal_protocol_address *address,
                                   void *user_data)
 {
-	printf("%s:%d in %s\n", __FILE__, __LINE__, __FUNCTION__);
+	KSC_DEBUG(NOTE, "in %s()\n", __FUNCTION__);
 	struct json_store *js = user_data;
 	struct kjson_value *st = sess_store(js);
 	struct kjson_value *v = find_by_address(st, address);
@@ -326,7 +339,7 @@ static int sess_get_sub_device_sessions_func(signal_int_list **sessions,
                                              const char *name, size_t name_len,
                                              void *user_data)
 {
-	printf("%s:%d in %s\n", __FILE__, __LINE__, __FUNCTION__);
+	KSC_DEBUG(NOTE, "in %s()\n", __FUNCTION__);
 	struct json_store *js = user_data;
 	struct kjson_value *st = sess_store(js);
 	assert(st->type == KJSON_VALUE_ARRAY);
@@ -394,7 +407,7 @@ static int sess_store_session_func(const signal_protocol_address *address,
                                    uint8_t *user_record, size_t user_record_len,
                                    void *user_data)
 {
-	printf("%s:%d in %s\n", __FILE__, __LINE__, __FUNCTION__);
+	KSC_DEBUG(NOTE, "in %s()\n", __FUNCTION__);
 	struct json_store *js = user_data;
 	struct kjson_value *st = sess_store(js);
 	char *record_enc = json_store_alloc(js, (record_len + 2) / 3 * 4);
@@ -448,7 +461,7 @@ done:
 static int sess_contains_session_func(const signal_protocol_address *address,
                                       void *user_data)
 {
-	printf("%s:%d in %s\n", __FILE__, __LINE__, __FUNCTION__);
+	KSC_DEBUG(NOTE, "in %s()\n", __FUNCTION__);
 	struct json_store *js = user_data;
 	struct kjson_value *st = sess_store(js);
 	return find_by_address(st, address) ? 1 : 0;
@@ -457,7 +470,7 @@ static int sess_contains_session_func(const signal_protocol_address *address,
 static int sess_delete_session_func(const signal_protocol_address *address,
                                     void *user_data)
 {
-	printf("%s:%d in %s\n", __FILE__, __LINE__, __FUNCTION__);
+	KSC_DEBUG(NOTE, "in %s()\n", __FUNCTION__);
 	struct json_store *js = user_data;
 	struct kjson_value *st = sess_store(js);
 	struct kjson_value *v = find_by_address(st, address);
@@ -471,7 +484,7 @@ static int sess_delete_session_func(const signal_protocol_address *address,
 static int sess_delete_all_sessions_func(const char *name, size_t name_len,
                                          void *user_data)
 {
-	printf("%s:%d in %s\n", __FILE__, __LINE__, __FUNCTION__);
+	KSC_DEBUG(NOTE, "in %s()\n", __FUNCTION__);
 	struct json_store *js = user_data;
 	struct kjson_value *st = sess_store(js);
 	assert(!st || st->type == KJSON_VALUE_ARRAY);
@@ -495,7 +508,7 @@ static int sess_delete_all_sessions_func(const char *name, size_t name_len,
 
 static void sess_destroy_session_func(void *user_data)
 {
-	printf("%s:%d in %s\n", __FILE__, __LINE__, __FUNCTION__);
+	KSC_DEBUG(NOTE, "in %s()\n", __FUNCTION__);
 	struct json_store *js = user_data;
 	(void)js;
 }
@@ -549,7 +562,7 @@ static struct kjson_value * prek_lookup(struct kjson_value *st,
 static int prek_load_pre_key(signal_buffer **record, uint32_t pre_key_id,
                              void *user_data)
 {
-	printf("%s:%d in %s\n", __FILE__, __LINE__, __FUNCTION__);
+	KSC_DEBUG(NOTE, "in %s()\n", __FUNCTION__);
 	struct json_store *js = user_data;
 	struct kjson_value *st = prek_store(js);
 	struct kjson_value *v = prek_lookup(st, pre_key_id);
@@ -568,7 +581,7 @@ static int prek_load_pre_key(signal_buffer **record, uint32_t pre_key_id,
  */
 static int prek_contains_pre_key(uint32_t pre_key_id, void *user_data)
 {
-	printf("%s:%d in %s\n", __FILE__, __LINE__, __FUNCTION__);
+	KSC_DEBUG(NOTE, "in %s()\n", __FUNCTION__);
 	struct json_store *js = user_data;
 	struct kjson_value *st = prek_store(js);
 	struct kjson_value *v = prek_lookup(st, pre_key_id);
@@ -586,7 +599,7 @@ static int prek_contains_pre_key(uint32_t pre_key_id, void *user_data)
 static int prek_store_pre_key(uint32_t pre_key_id, uint8_t *record,
                               size_t record_len, void *user_data)
 {
-	printf("%s:%d in %s\n", __FILE__, __LINE__, __FUNCTION__);
+	KSC_DEBUG(NOTE, "in %s()\n", __FUNCTION__);
 	struct json_store *js = user_data;
 	struct kjson_value *st = prek_store(js);
 	if (prek_lookup(st, pre_key_id))
@@ -624,7 +637,7 @@ static int prek_store_pre_key(uint32_t pre_key_id, uint8_t *record,
  */
 static int prek_remove_pre_key(uint32_t pre_key_id, void *user_data)
 {
-	printf("%s:%d in %s\n", __FILE__, __LINE__, __FUNCTION__);
+	KSC_DEBUG(NOTE, "in %s()\n", __FUNCTION__);
 	struct json_store *js = user_data;
 	struct kjson_value *st = prek_store(js);
 	struct kjson_value *v = prek_lookup(st, pre_key_id);
@@ -637,7 +650,7 @@ static int prek_remove_pre_key(uint32_t pre_key_id, void *user_data)
 
 static void prek_destroy_func(void *user_data)
 {
-	printf("%s:%d in %s\n", __FILE__, __LINE__, __FUNCTION__);
+	KSC_DEBUG(NOTE, "in %s()\n", __FUNCTION__);
 	struct json_store *js = user_data;
 	(void)js;
 }
@@ -691,7 +704,7 @@ static int sipk_load_signed_pre_key(signal_buffer **record,
                                     uint32_t signed_pre_key_id,
                                     void *user_data)
 {
-	printf("%s:%d in %s\n", __FILE__, __LINE__, __FUNCTION__);
+	KSC_DEBUG(NOTE, "in %s()\n", __FUNCTION__);
 	struct json_store *js = user_data;
 	struct kjson_value *st = sipk_store(js);
 	struct kjson_value *v = sipk_lookup(st, signed_pre_key_id);
@@ -713,7 +726,7 @@ static int sipk_store_signed_pre_key(uint32_t signed_pre_key_id,
                                      uint8_t *record, size_t record_len,
                                      void *user_data)
 {
-	printf("%s:%d in %s\n", __FILE__, __LINE__, __FUNCTION__);
+	KSC_DEBUG(NOTE, "in %s()\n", __FUNCTION__);
 	struct json_store *js = user_data;
 	struct kjson_value *st = sipk_store(js);
 	if (prek_lookup(st, signed_pre_key_id))
@@ -753,7 +766,7 @@ static int sipk_store_signed_pre_key(uint32_t signed_pre_key_id,
 static int sipk_contains_signed_pre_key(uint32_t signed_pre_key_id,
                                         void *user_data)
 {
-	printf("%s:%d in %s\n", __FILE__, __LINE__, __FUNCTION__);
+	KSC_DEBUG(NOTE, "in %s()\n", __FUNCTION__);
 	struct json_store *js = user_data;
 	struct kjson_value *st = sipk_store(js);
 	struct kjson_value *v = sipk_lookup(st, signed_pre_key_id);
@@ -769,7 +782,7 @@ static int sipk_contains_signed_pre_key(uint32_t signed_pre_key_id,
 static int sipk_remove_signed_pre_key(uint32_t signed_pre_key_id,
                                       void *user_data)
 {
-	printf("%s:%d in %s\n", __FILE__, __LINE__, __FUNCTION__);
+	KSC_DEBUG(NOTE, "in %s()\n", __FUNCTION__);
 	struct json_store *js = user_data;
 	struct kjson_value *st = sipk_store(js);
 	struct kjson_value *v = sipk_lookup(st, signed_pre_key_id);
@@ -786,7 +799,7 @@ static int sipk_remove_signed_pre_key(uint32_t signed_pre_key_id,
  */
 static void sipk_destroy_func(void *user_data)
 {
-	printf("%s:%d in %s\n", __FILE__, __LINE__, __FUNCTION__);
+	KSC_DEBUG(NOTE, "in %s()\n", __FUNCTION__);
 	struct json_store *js = user_data;
 	(void)js;
 }
@@ -828,7 +841,7 @@ static int idk_get_identity_key_pair(signal_buffer **public_data,
                                      signal_buffer **private_data,
                                      void *user_data)
 {
-	printf("%s:%d in %s\n", __FILE__, __LINE__, __FUNCTION__);
+	KSC_DEBUG(NOTE, "in %s()\n", __FUNCTION__);
 	struct json_store *js = user_data;
 	struct kjson_value *st = idk_store(js);
 	signal_buffer *pb_keys = NULL;
@@ -860,7 +873,7 @@ static int idk_get_identity_key_pair(signal_buffer **public_data,
 static int idk_get_local_registration_id(void *user_data,
                                          uint32_t *registration_id)
 {
-	printf("%s:%d in %s\n", __FILE__, __LINE__, __FUNCTION__);
+	KSC_DEBUG(NOTE, "in %s()\n", __FUNCTION__);
 	struct json_store *js = user_data;
 	struct kjson_value *st = idk_store(js);
 	struct kjson_value *v = kjson_get(st, "registrationId");
@@ -909,7 +922,7 @@ struct kjson_value * idk_lookup_tk(struct kjson_value *st,
 static int idk_save_identity(const signal_protocol_address *address,
                              uint8_t *key_data, size_t key_len, void *user_data)
 {
-	printf("%s:%d in %s\n", __FILE__, __LINE__, __FUNCTION__);
+	KSC_DEBUG(NOTE, "in %s()\n", __FUNCTION__);
 	struct json_store *js = user_data;
 	struct kjson_value *st = idk_store(js);
 	struct kjson_value *tk = kjson_get(st, "trustedKeys");
@@ -959,9 +972,8 @@ static int idk_save_identity(const signal_protocol_address *address,
 	}
 	int r = json_store_save(js);
 	if (r < 0) { /* TODO */
-		fprintf(stderr,
-		        "ERROR %d saving identity key, session state garbled!\n",
-		        r);
+		LOG(ERROR,
+		    "error %d saving identity key, session state garbled!\n",r);
 	}
 	return r;
 	(void)key_len;
@@ -987,7 +999,7 @@ static int idk_is_trusted_identity(const signal_protocol_address *address,
                                    uint8_t *key_data, size_t key_len,
                                    void *user_data)
 {
-	printf("%s:%d in %s\n", __FILE__, __LINE__, __FUNCTION__);
+	KSC_DEBUG(NOTE, "in %s()\n", __FUNCTION__);
 	struct json_store *js = user_data;
 	struct kjson_value *st = idk_store(js);
 	struct kjson_value *e = idk_lookup_tk(st, address);
@@ -1010,7 +1022,7 @@ static int idk_is_trusted_identity(const signal_protocol_address *address,
  */
 static void idk_destroy_func(void *user_data)
 {
-	printf("%s:%d in %s\n", __FILE__, __LINE__, __FUNCTION__);
+	KSC_DEBUG(NOTE, "in %s()\n", __FUNCTION__);
 	struct json_store *js = user_data;
 	(void)js;
 }
