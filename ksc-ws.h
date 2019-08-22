@@ -18,6 +18,8 @@ struct ksc_ws_connect_args {
 	void *udata;
 };
 
+void print_envelope(const Signalservice__Envelope *e, int fd, bool detail);
+
 /* returns NULL on error or a pointer to the uuid on success (the uuid may
  * change when args.on_close_do_reconnect is true, however, the pointer remains
  * valid until this socket is closed). It points into an internal structure

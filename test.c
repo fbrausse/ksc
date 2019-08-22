@@ -224,8 +224,14 @@ static bool on_content(ws_s *ws, const Signalservice__Envelope *e,
 {
 	struct ksc_ctx *ksc = udata;
 	LOG(INFO, "received content:\n");
-	if (c->datamessage && ksc_log_prints(KSC_LOG_INFO, &ksc->log, &log_ctx))
+	if (ksc_log_prints(KSC_LOG_INFO, &ksc->log, &log_ctx)) {
+		print_envelope(e, ksc->log.fd,
+		               ksc_log_prints(KSC_LOG_DEBUG, &ksc->log, &log_ctx));
+	}
+	if (c->datamessage && ksc_log_prints(KSC_LOG_INFO, &ksc->log, &log_ctx)) {
+		dprintf(ksc->log.fd, "  ------ data ------\n");
 		print_data_message(ksc->log.fd, c->datamessage);
+	}
 	return true;
 	(void)ws;
 	(void)e;
@@ -345,5 +351,11 @@ int main(int argc, char **argv)
 		      "json_store_save returned %d\n", r);
 	}
 	json_store_destroy(js);
+
+	for (struct ksc_log__context_lvl *it, *jt = ctx.log.context_lvls; (it = jt);) {
+		jt = it->next;
+		free(it);
+	}
+
 	return 0;
 }

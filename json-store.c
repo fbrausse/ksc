@@ -128,7 +128,7 @@ bool json_store_load(struct json_store *js)
 	}
 	if (errno)
 		return false;
-	kjson_value_fini(&js->cfg);
+	json_value_fini(&js->cfg);
 	js->cfg.type = KJSON_VALUE_NULL;
 	bool r = kjson_parse(&(struct kjson_parser){ bf.data }, &js->cfg);
 	if (!r)

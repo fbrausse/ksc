@@ -110,7 +110,9 @@ static int received_ciphertext(signal_buffer **plaintext, uint8_t *content,
 		goto done;
 
 	r = session_cipher_decrypt_signal_message(cipher, msg, NULL, plaintext);
-	LOGr(r, "session_cipher_decrypt_signal_message -> %d\n", r);
+	LOG_(!r ? KSC_LOG_DEBUG :
+	     r == SG_ERR_DUPLICATE_MESSAGE ? KSC_LOG_WARN : KSC_LOG_ERROR,
+	     "session_cipher_decrypt_signal_message -> %d\n", r);
 done:
 	SIGNAL_UNREF(msg);
 	return r;
@@ -187,7 +189,7 @@ static bool received_envelope(ws_s *ws, const Signalservice__Envelope *e,
 	return r == 0;
 }
 
-static void print_envelope(const Signalservice__Envelope *e, int fd, bool detail)
+void print_envelope(const Signalservice__Envelope *e, int fd, bool detail)
 {
 	if (e->has_type) {
 		const char *type = NULL;
