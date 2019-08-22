@@ -27,6 +27,60 @@ static const struct ksc_log_context log_ctx = {
 #define RECEIPT             SIGNALSERVICE__ENVELOPE__TYPE__RECEIPT
 #define UNIDENTIFIED_SENDER SIGNALSERVICE__ENVELOPE__TYPE__UNIDENTIFIED_SENDER
 
+void ksc_print_envelope(const Signalservice__Envelope *e, int fd, bool detail)
+{
+	if (e->has_type) {
+		const char *type = NULL;
+		switch (e->type) {
+		case UNKNOWN            : type = "unknown"; break;
+		case CIPHERTEXT         : type = "ciphertext"; break;
+		case KEY_EXCHANGE       : type = "key exchange"; break;
+		case PREKEY_BUNDLE      : type = "prekey bundle"; break;
+		case RECEIPT            : type = "receipt"; break;
+		case UNIDENTIFIED_SENDER: type = "unidentified sender"; break;
+		case _SIGNALSERVICE__ENVELOPE__TYPE_IS_INT_SIZE: break;
+		}
+		dprintf(fd, "  type: %s (%d)\n", type, e->type);
+	}
+	if (e->source)
+		dprintf(fd, "  source: %s\n", e->source);
+	if (e->has_sourcedevice)
+		dprintf(fd, "  source device: %u\n", e->sourcedevice);
+	if (e->relay)
+		dprintf(fd, "  relay: %s\n", e->relay);
+	if (e->has_timestamp) {
+		char buf[32];
+		time_t t = e->timestamp / 1000;
+		ctime_r(&t, buf);
+		dprintf(fd, "  timestamp: %s", buf);
+	}
+	if (e->has_legacymessage) {
+		dprintf(fd, "  has encrypted legacy message of size %zu%s\n",
+		        e->legacymessage.len, detail ? ":" : "");
+		if (detail) {
+			ksc_dprint_hex(fd, e->legacymessage.data,
+			               e->legacymessage.len);
+			dprintf(fd, "\n");
+		}
+	}
+	if (e->has_content) {
+		dprintf(fd, "  has encrypted content of size %zu%s\n",
+		        e->content.len, detail ? ":" : "");
+		if (detail) {
+			ksc_dprint_hex(fd, e->content.data, e->content.len);
+			dprintf(fd, "\n");
+		}
+	}
+	if (e->serverguid)
+		dprintf(fd, "  server guid: %s\n", e->serverguid);
+	if (e->has_servertimestamp) {
+		char buf[32];
+		time_t t = e->servertimestamp / 1000;
+		ctime_r(&t, buf);
+		dprintf(fd, "  server timestamp: %s", buf);
+	}
+}
+
 struct ksignal_ctx {
 	struct json_store *js;
 	signal_context *ctx;
@@ -191,60 +245,6 @@ static bool received_envelope(ws_s *ws, const Signalservice__Envelope *e,
 
 	signal_buffer_free(plaintext);
 	return r == 0;
-}
-
-void ksc_print_envelope(const Signalservice__Envelope *e, int fd, bool detail)
-{
-	if (e->has_type) {
-		const char *type = NULL;
-		switch (e->type) {
-		case UNKNOWN            : type = "unknown"; break;
-		case CIPHERTEXT         : type = "ciphertext"; break;
-		case KEY_EXCHANGE       : type = "key exchange"; break;
-		case PREKEY_BUNDLE      : type = "prekey bundle"; break;
-		case RECEIPT            : type = "receipt"; break;
-		case UNIDENTIFIED_SENDER: type = "unidentified sender"; break;
-		case _SIGNALSERVICE__ENVELOPE__TYPE_IS_INT_SIZE: break;
-		}
-		dprintf(fd, "  type: %s (%d)\n", type, e->type);
-	}
-	if (e->source)
-		dprintf(fd, "  source: %s\n", e->source);
-	if (e->has_sourcedevice)
-		dprintf(fd, "  source device: %u\n", e->sourcedevice);
-	if (e->relay)
-		dprintf(fd, "  relay: %s\n", e->relay);
-	if (e->has_timestamp) {
-		char buf[32];
-		time_t t = e->timestamp / 1000;
-		ctime_r(&t, buf);
-		dprintf(fd, "  timestamp: %s", buf);
-	}
-	if (e->has_legacymessage) {
-		dprintf(fd, "  has encrypted legacy message of size %zu%s\n",
-		        e->legacymessage.len, detail ? ":" : "");
-		if (detail) {
-			ksc_dprint_hex(fd, e->legacymessage.data,
-			               e->legacymessage.len);
-			dprintf(fd, "\n");
-		}
-	}
-	if (e->has_content) {
-		dprintf(fd, "  has encrypted content of size %zu%s\n",
-		        e->content.len, detail ? ":" : "");
-		if (detail) {
-			ksc_dprint_hex(fd, e->content.data, e->content.len);
-			dprintf(fd, "\n");
-		}
-	}
-	if (e->serverguid)
-		dprintf(fd, "  server guid: %s\n", e->serverguid);
-	if (e->has_servertimestamp) {
-		char buf[32];
-		time_t t = e->servertimestamp / 1000;
-		ctime_r(&t, buf);
-		dprintf(fd, "  server timestamp: %s", buf);
-	}
 }
 
 static bool is_request_signal_key_encrypted(size_t n_headers,
@@ -431,6 +431,7 @@ static void on_close(intptr_t uuid, void *udata)
 				.handle_response = NULL,
 				.udata = ksc,
 				.on_close = on_close,
+				.log = ksc->args.log,
 			);
 		}
 		if (ksc->uuid >= 0)

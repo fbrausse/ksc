@@ -307,6 +307,8 @@ static void _signal_ws_keepalive(void *udata)
 {
 	ws_s *s = udata;
 	struct ksc_ws_connect_raw_args *h = websocket_udata_get(s);
+	if (!h)
+		return;
 	LOG(DEBUG, "sending keep-alive\n");
 	int r = ksc_ws_send_request(s, "GET", "/v1/keepalive",
 	                            .on_response = _signal_ws_keepalive_on_response);
@@ -375,8 +377,9 @@ static void _on_websocket_http_connection_finished(http_settings_s *settings) {
     if (s->on_close)
       s->on_close(0, s->udata);
     free(s);
-  } else
-    KSC_DEBUG(DEBUG, "on_websocket_http_connection_finished\n");
+  } else {
+    /*KSC_DEBUG(DEBUG, "on_websocket_http_connection_finished\n")*/;
+  }
 }
 
 static fio_tls_s * signal_tls(const char *cert_path)

@@ -210,7 +210,7 @@ static void send_get_profile(ws_s *s, void *udata)
 	ksc_ws_send_request(s, "GET", "/v1/certificate/delivery",
 	                    .on_response = recv_get_cert_delivery,
 	                    .udata = ksc);
-#elif 1
+#elif 0
 	ksc_ws_send_request(s, "GET", "/v1/messages/",
 	                    .on_response = recv_messages,
 	                    .udata = ksc);
@@ -253,7 +253,7 @@ static bool parse_v_lvl(const char *lvl, enum ksc_log_lvl *res)
 
 static bool parse_v(char *arg, struct ksc_log *log)
 {
-	char *colon = strchr(arg, ':');
+	char *colon = strrchr(arg, ':');
 	if (!colon)
 		return parse_v_lvl(arg, &log->max_lvl);
 	enum ksc_log_lvl lvl;
