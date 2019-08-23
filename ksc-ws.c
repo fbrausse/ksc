@@ -236,7 +236,6 @@ static bool received_envelope(ws_s *ws, const Signalservice__Envelope *e,
 		struct delete_request_args args = { ws, ksc };
 		fio_defer(delete_request, memdup(&args, sizeof(args)),
 		          ack_message_path(e));
-		r = 0;
 	}
 	if (!r && plaintext)
 		r = received_message(ws, e, signal_buffer_data(plaintext),
@@ -299,7 +298,7 @@ static int handle_request(ws_s *ws, char *verb, char *path, uint64_t *id,
 			ksc_print_envelope(e, fd,
 			                   ksc_log_prints(KSC_LOG_DEBUG, ksc->args.log, &log_ctx));
 		}
-		r = received_envelope(ws, e, ksc) ? 0 : -3;
+		r = received_envelope(ws, e, ksc) ? 1 : -3;
 		signalservice__envelope__free_unpacked(e, NULL);
 	}
 	return r;

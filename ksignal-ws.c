@@ -42,7 +42,7 @@ static int signal_ws_send(ws_s *s, ProtobufCMessage *request_or_response)
 	} else if (request_or_response->descriptor ==
 	           &signalservice__web_socket_response_message__descriptor) {
 		ws_msg.has_type = true;
-		ws_msg.type = SIGNALSERVICE__WEB_SOCKET_MESSAGE__TYPE__REQUEST;
+		ws_msg.type = SIGNALSERVICE__WEB_SOCKET_MESSAGE__TYPE__RESPONSE;
 		ws_msg.response = (Signalservice__WebSocketResponseMessage *)request_or_response;
 		if (ksc_log_prints(KSC_LOG_NOTE, h->log, &log_ctx)) {
 			LOG(NOTE, "sending response ws message: %d %s",
@@ -344,7 +344,7 @@ static void _signal_ws_on_ready(ws_s *s)
 static void _signal_ws_on_close(intptr_t uuid, void *udata)
 {
 	struct ksc_ws_connect_raw_args *h = udata;
-	LOG(DEBUG, "signal_ws_close\n");
+	LOG(NOTE, "signal ws socket closed\n");
 	if (h && h->on_close)
 		h->on_close(uuid, h->udata);
 	free(h);

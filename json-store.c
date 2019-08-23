@@ -501,9 +501,11 @@ static struct kjson_value json_value_dup(struct kjson_value *v)
 	case KJSON_VALUE_OBJECT:
 		r.o.data = malloc(sizeof(*r.o.data) * r.o.n);
 		for (size_t i=0; i<r.o.n; i++) {
-			struct kjson_string *s = &r.o.data[i].key;
-			s->begin = memcpy(malloc(s->len + 1), s->begin, s->len);
-			s->begin[s->len] = '\0';
+			struct kjson_string *t = &r.o.data[i].key;
+			struct kjson_string *s = &v->o.data[i].key;
+			t->begin = memcpy(malloc(s->len + 1), s->begin, s->len);
+			t->begin[s->len] = '\0';
+			t->len = s->len;
 			r.o.data[i].value = json_value_dup(&v->o.data[i].value);
 		}
 		break;
