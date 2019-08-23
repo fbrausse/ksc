@@ -145,8 +145,7 @@ static void ksc_log_desc_msg(int fd, enum ksc_log_lvl level,
 	}
 }
 
-bool ksc_log_prints(enum ksc_log_lvl lvl,
-                    const struct ksc_log *log,
+bool ksc_log_prints(enum ksc_log_lvl lvl, const struct ksc_log *log,
                     const struct ksc_log_context *context)
 {
 	if (!log)

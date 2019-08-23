@@ -1061,6 +1061,9 @@ static int idk_save_identity(const signal_protocol_address *address,
 		}));
 	}
 	struct kjson_value *idk = kjson_get(e, "identityKey");
+	struct kjson_value old_idk = KJSON_VALUE_INIT;
+	if (idk)
+		old_idk = *idk;
 	if (key_data) {
 		struct kjson_string record_str = { NULL, 0 };
 		char *record_enc = malloc((key_len + 2) / 3 * 4 + 1);
@@ -1076,13 +1079,13 @@ static int idk_save_identity(const signal_protocol_address *address,
 			idk->s = record_str;
 		} else {
 			/* insert idk into e */
-			kjson_object_push_back(&e->o,
-				.key = { "identityKey", 11 },
+			idk = &kjson_object_push_back(&e->o,
+				.key = { memdup("identityKey", 12), 11 },
 				.value = {
 					.type = KJSON_VALUE_STRING,
 					.s = record_str,
 				},
-			);
+			)->value;
 		}
 	} else if (idk) {
 		/* remove idk from e */
@@ -1094,6 +1097,8 @@ static int idk_save_identity(const signal_protocol_address *address,
 	if (r < 0) { /* TODO */
 		LOG(ERROR,
 		    "error %d saving identity key, session state garbled!\n",r);
+	} else {
+		json_value_fini(&old_idk);
 	}
 	return r;
 	(void)key_len;

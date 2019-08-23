@@ -92,8 +92,7 @@ struct ksc_log_context {
 	const char *color;
 };
 
-bool ksc_log_prints(enum ksc_log_lvl lvl,
-                    const struct ksc_log *log,
+bool ksc_log_prints(enum ksc_log_lvl lvl, const struct ksc_log *log,
                     const struct ksc_log_context *context);
 
 void ksc_vlog(enum ksc_log_lvl level, struct ksc_log *log,
@@ -119,6 +118,6 @@ void ksc_log(enum ksc_log_lvl level, struct ksc_log *log,
 	        (&(struct ksc_log_context){ __FILE__ ":" KSC_XSTR(__LINE__), "92" }), \
 	        __VA_ARGS__)
 
-#define KSC_DEBUG(lvl, ...) KSC_DEBUGL(lvl, (&KSC_DEFAULT_LOG), __VA_ARGS__)
+#define KSC_DEBUG(lvl, ...) KSC_DEBUGL(lvl,, __VA_ARGS__)
 
 #endif

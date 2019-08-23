@@ -192,12 +192,13 @@ static void _on_ws_request(ws_s *s,
                            struct ksc_ws_connect_raw_args *h)
 {
 	if (ksc_log_prints(KSC_LOG_NOTE, h->log, &log_ctx)) {
-		LOG(NOTE, "ws request: %s %s\n", request->verb, request->path);
+		LOG(NOTE, "ws request: %s %s", request->verb, request->path);
 		int fd = (h->log ? h->log : &KSC_DEFAULT_LOG)->fd;
+		if (request->has_id)
+			dprintf(fd, " (id: %lu)", request->id);
+		dprintf(fd, "\n");
 		for (size_t i=0; i<request->n_headers; i++)
 			dprintf(fd, "  header: %s\n", request->headers[i]);
-		if (request->has_id)
-			dprintf(fd, "  id: %lu\n", request->id);
 		if (request->has_body)
 			dprintf(fd, "  body size: %lu\n", request->body.len);
 	}
@@ -226,11 +227,12 @@ static void _on_ws_response(ws_s *s,
 		int fd = (h->log ? h->log : &KSC_DEFAULT_LOG)->fd;
 		if (response->has_status)
 			dprintf(fd, "%u ", response->status);
-		dprintf(fd, "%s\n", response->message);
+		dprintf(fd, "%s", response->message);
+		if (response->has_id)
+			dprintf(fd, " (id: %lu)", response->id);
+		dprintf(fd, "\n");
 		for (size_t i=0; i<response->n_headers; i++)
 			dprintf(fd, "%s\n", response->headers[i]);
-		if (response->has_id)
-			dprintf(fd, "  id: %lu\n", response->id);
 		if (response->has_body)
 			dprintf(fd, "  body size: %lu\n", response->body.len);
 	}
@@ -365,7 +367,7 @@ static void _on_websocket_http_connected(http_s *h) {
                                          sizeof("X-Signal-Agent: " SIGNAL_USER_AGENT)-1));
 #endif
   int r = (http_upgrade2ws)(h, *s);
-  LOGL(DEBUG, hh->log, "http_upgrade2ws: %d\n", r);
+  LOGL_(r ? KSC_LOG_ERROR : KSC_LOG_DEBUG, hh->log, "http_upgrade2ws: %d\n", r);
   free(s);
 }
 
