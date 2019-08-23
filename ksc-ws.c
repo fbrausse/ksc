@@ -300,6 +300,11 @@ static int handle_request(ws_s *ws, char *verb, char *path, uint64_t *id,
 		}
 		r = received_envelope(ws, e, ksc) ? 1 : -3;
 		signalservice__envelope__free_unpacked(e, NULL);
+	} else if (!strcmp(verb, "PUT") && !strcmp(path, "/api/v1/queue/empty")) {
+		r = 1;
+	} else {
+		LOG(WARN, "unhandled request: %s %s\n", verb, path);
+		r = -1;
 	}
 	return r;
 	(void)id;
