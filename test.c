@@ -224,16 +224,41 @@ static bool on_content(ws_s *ws, const Signalservice__Envelope *e,
                        const Signalservice__Content *c, void *udata)
 {
 	struct ksc_ctx *ksc = udata;
-	LOG(INFO, "received content:\n");
 	if (ksc_log_prints(KSC_LOG_INFO, &ksc->log, &log_ctx)) {
+		LOG(INFO, "received content:\n");
 		ksc_print_envelope(e, ksc->log.fd,
 		                   ksc_log_prints(KSC_LOG_DEBUG, &ksc->log, &log_ctx));
+		if (c->base.n_unknown_fields) {
+			dprintf(ksc->log.fd, "  ------ base ------\n");
+			dprintf(ksc->log.fd, "  # unknown fields: %u\n",
+			        c->base.n_unknown_fields);
+		}
+		if (c->datamessage) {
+			dprintf(ksc->log.fd, "  ------ data ------\n");
+			print_data_message(ksc->log.fd, c->datamessage);
+		}
+		if (c->syncmessage)
+			dprintf(ksc->log.fd, "  ------ sync ------\n");
+		if (c->callmessage)
+			dprintf(ksc->log.fd, "  ------ call ------\n");
+		if (c->nullmessage)
+			dprintf(ksc->log.fd, "  ------ null ------\n");
+		if (c->receiptmessage)
+			dprintf(ksc->log.fd, "  ------ rcpt ------\n");
+		if (c->typingmessage)
+			dprintf(ksc->log.fd, "  ------ typn ------\n");
 	}
-	if (c->datamessage && ksc_log_prints(KSC_LOG_INFO, &ksc->log, &log_ctx)) {
-		dprintf(ksc->log.fd, "  ------ data ------\n");
-		print_data_message(ksc->log.fd, c->datamessage);
-	}
-	return true;
+	if (c->base.n_unknown_fields)
+		return false;
+	if (c->syncmessage)
+		return false;
+	if (c->callmessage)
+		return false;
+	if (c->receiptmessage)
+		return false;
+	if (c->typingmessage)
+		return false;
+	return true; /* handled */
 	(void)ws;
 	(void)e;
 }
