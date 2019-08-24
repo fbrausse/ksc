@@ -5,8 +5,7 @@ PROJECT_NAME = ksc
 PROJECT_VERSION = 0.1
 
 CFLAGS  ?= -g
-LDFLAGS ?= -Wl,--as-needed
-OPTS    ?= #-flto
+OPTS    ?= #-Os -flto
 CLDFLAGS ?= \
 	#-fsanitize=address \
 	#-fsanitize=undefined \
@@ -44,16 +43,10 @@ override CLDFLAGS := \
 	$(OPTS) \
 	$(CLDFLAGS)
 
-# don't do the non-standard thing and include the path component "signal" under
-# the include/ path (no need to import all their files into global #include
-# namespace)
-SED_STRIP_SIGNAL = s%(-I[^ ]*)/signal( |$$)%\1\2%g
-
 override CFLAGS := \
 	-MD \
-	$(shell $(PKG_CONFIG) --cflags $(filter-out libsignal-protocol-c,$(PKGS))) \
-	$(shell $(PKG_CONFIG) --cflags libsignal-protocol-c | sed -r '$(SED_STRIP_SIGNAL)') \
-	-I../kjson \
+	$(shell $(PKG_CONFIG) --cflags libsignal-protocol-c,$(PKGS)) \
+	-I$(KJSON_PATH) \
 	-Wall -Wextra \
 	$(CLDFLAGS) \
 	$(CFLAGS) \
@@ -61,7 +54,7 @@ override CFLAGS := \
 test: override LDFLAGS := \
 	$(shell $(PKG_CONFIG) --libs-only-L --libs-only-other $(PKGS)) \
 	$(subst -L,-Xlinker -rpath -Xlinker ,$(shell $(PKG_CONFIG) --libs-only-L $(PKGS))) \
-	-L../kjson \
+	-L$(KJSON_PATH) \
 	$(CLDFLAGS) \
 	$(LDFLAGS) \
 

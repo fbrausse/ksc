@@ -1,13 +1,14 @@
 Building
 ========
 Requires the following prerequisites (all of these refer to the `master`
-branch at the linked URL):
+branch at the linked URL if not specified otherwise):
 
 * Installed libraries (found by `pkg-config`(1), see below for customization):
   - libsignal-protocol-c: https://github.com/fbrausse/libsignal-protocol-c
-  - facil.io: https://github.com/fbrausse/facil.io
+  - facil.io (branch v0.7.x): https://github.com/fbrausse/facil.io
     including TLS support (requires `openssl-1.1.x`(1))
   - kjson: https://github.com/fbrausse/kjson
+    set in the `make` variable `KJSON_PATH`.
 
 * A copy of (the protocol buffer definitions from)
   libsignal-service-java: https://github.com/Turasa/libsignal-service-java
