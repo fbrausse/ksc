@@ -47,3 +47,8 @@ The JSON protocol state file is compatible with that used by
 POSIX locks are employed in a cooperative fashion such that the state file
 won't be modified by any two processes `test`, `signal-cli` or `signald`
 simultaneously.
+
+The default log level is `info` and can be set to `debug`, `note`, `info`,
+`warn`, `error` or `none` using the parameter `-v`. An optional prefix
+controls logging for a specific subsystem, e.g., `-v ksignal-ws:note` will
+result in outputs of various network-related events.

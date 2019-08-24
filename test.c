@@ -303,6 +303,7 @@ static bool parse_v(char *arg, struct ksc_log *log)
 int main(int argc, char **argv)
 {
 	struct ksc_log log = KSC_DEFAULT_LOG;
+	log.max_lvl = KSC_LOG_INFO;
 	const char *cli_path = DEFAULT_CLI_CONFIG;
 	for (int opt; (opt = getopt(argc, argv, ":hp:v:")) != -1;)
 		switch (opt) {
