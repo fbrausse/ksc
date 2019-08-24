@@ -33,7 +33,7 @@ For custom install paths of the above libraries (except kjson), define
 the PKG_CONFIG variable in a new file `default.mk` which is included in the
 main `Makefile`, e.g. like this:
 ```
-PKG_CONFIG = PKG_CONFIG_PATH=/path/to/lib/pkgconfig $(PKG_CONFIG)
+PKG_CONFIG := PKG_CONFIG_PATH=/path/to/lib/pkgconfig $(PKG_CONFIG)
 ```
 
 If you don't plan to install this software, in `default.mk` you should also set
