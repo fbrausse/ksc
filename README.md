@@ -3,6 +3,8 @@ Building
 Requires the following prerequisites (all of these refer to the `master`
 branch at the linked URL if not specified otherwise):
 
+* GNU make (1)
+
 * Installed libraries (found by `pkg-config`(1), see below for customization):
   - libsignal-protocol-c: https://github.com/fbrausse/libsignal-protocol-c
     ```
