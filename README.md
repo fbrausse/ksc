@@ -1,11 +1,12 @@
 Building
 ========
-Requires the following prerequisites:
+Requires the following prerequisites (all of these refer to the `master`
+branch at the linked URL):
 
 * Installed libraries (found by `pkg-config`(1), see below for customization):
   - libsignal-protocol-c: https://github.com/fbrausse/libsignal-protocol-c
   - facil.io: https://github.com/fbrausse/facil.io
-    including TLS support (requires `openssl-1.1.x`(1) as of facil-v0.7)
+    including TLS support (requires `openssl-1.1.x`(1))
   - kjson: https://github.com/fbrausse/kjson
 
 * A copy of (the protocol buffer definitions from)
