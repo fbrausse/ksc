@@ -1,3 +1,5 @@
+# default target
+all:
 
 CFLAGS  ?= -g
 LDFLAGS ?= -Wl,--as-needed
@@ -7,18 +9,22 @@ CLDFLAGS ?= \
 	#-fsanitize=undefined \
 	#-pthread \
 
+PKG_CONFIG ?= pkg-config
+
 -include default.mk
 
 my_datadir ?= $(datadir)/ksignal
 
 TS_SERVER_CERT = $(my_datadir)/whisper.store.asn1
 
+PKGS = facil libsignal-protocol-c
+
 ifdef GCRYPT
   CRYPT_OBJS = crypto-gcrypt.o
   test: override LDLIBS += -lgcrypt
 else
   CRYPT_OBJS = crypto-openssl-11.o
-  test: override LDLIBS += -lcrypto
+  PKGS += libcrypto
 endif
 
 CSTD = -std=c11
@@ -34,21 +40,28 @@ override CLDFLAGS := \
 	$(OPTS) \
 	$(CLDFLAGS)
 
+# don't do the non-standard thing and include the path component "signal" under
+# the include/ path (no need to import all their files into global #include
+# namespace)
+SED_STRIP_SIGNAL = s%(-I[^ ]*)/signal( |$$)%\1\2%g
+
 override CFLAGS := \
 	-MD \
-	-I../facil.io/libdump/include \
+	$(shell $(PKG_CONFIG) --cflags $(filter-out libsignal-protocol-c,$(PKGS))) \
+	$(shell $(PKG_CONFIG) --cflags libsignal-protocol-c | sed -r '$(SED_STRIP_SIGNAL)') \
 	-I../kjson \
-	-I../libsignal-protocol-c/installed/include \
 	-Wall -Wextra \
 	$(CLDFLAGS) \
 	$(CFLAGS) \
 
-override LDFLAGS := \
-	-L../facil.io/tmp -Wl,-rpath,`realpath ../facil.io/tmp` \
-	-L../kjson -Wl,-rpath,`realpath ../kjson` \
-	-L../libsignal-protocol-c/build/src -Wl,-rpath,`realpath ../libsignal-protocol-c/build/src` \
+test: override LDFLAGS := \
+	$(shell $(PKG_CONFIG) --libs-only-L --libs-only-other $(PKGS)) \
+	$(subst -L,-Xlinker -rpath -Xlinker ,$(shell $(PKG_CONFIG) --libs-only-L $(PKGS))) \
+	-L../kjson \
 	$(CLDFLAGS) \
 	$(LDFLAGS) \
+
+test: override LDLIBS += $(shell $(PKG_CONFIG) --libs-only-l $(PKGS)) -lkjson
 
 OBJS = \
 	test.o \
@@ -79,7 +92,6 @@ PROTO_INCLUDE = $(shell echo ~/dev/libsignal-service-java/protobuf)
 
 all: test
 
-test: override LDLIBS += -lfacil -lprotobuf-c -lkjson -lsignal-protocol-c -lm
 test: $(OBJS)
 
 $(OBJS): %.o: %.c Makefile protos
