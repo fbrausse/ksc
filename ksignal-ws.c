@@ -8,6 +8,8 @@
 
 #include <protobuf-c/protobuf-c.h>	/* ProtobufCMessage */
 
+#include <inttypes.h>	/* PRI* macros */
+
 static const struct ksc_log_context log_ctx = {
 	.desc = "ksignal-ws",
 	.color = "33",
@@ -36,7 +38,7 @@ static int signal_ws_send(ws_s *s, ProtobufCMessage *request_or_response)
 			    ws_msg.request->verb, ws_msg.request->path);
 			int fd = (h->log ? h->log : &KSC_DEFAULT_LOG)->fd;
 			if (ws_msg.request->has_id)
-				dprintf(fd, " (id: %lu)", ws_msg.request->id);
+				dprintf(fd, " (id: %" PRIu64 ")", ws_msg.request->id);
 			dprintf(fd, "\n");
 		}
 	} else if (request_or_response->descriptor ==
@@ -50,7 +52,7 @@ static int signal_ws_send(ws_s *s, ProtobufCMessage *request_or_response)
 			    ws_msg.response->message);
 			int fd = (h->log ? h->log : &KSC_DEFAULT_LOG)->fd;
 			if (ws_msg.response->has_id)
-				dprintf(fd, " (id: %lu)", ws_msg.response->id);
+				dprintf(fd, " (id: %" PRIu64 ")", ws_msg.response->id);
 			dprintf(fd, "\n");
 		}
 	} else {
@@ -195,7 +197,7 @@ static void _on_ws_request(ws_s *s,
 		LOG(NOTE, "ws request: %s %s", request->verb, request->path);
 		int fd = (h->log ? h->log : &KSC_DEFAULT_LOG)->fd;
 		if (request->has_id)
-			dprintf(fd, " (id: %lu)", request->id);
+			dprintf(fd, " (id: %" PRIu64 ")", request->id);
 		dprintf(fd, "\n");
 		for (size_t i=0; i<request->n_headers; i++)
 			dprintf(fd, "  header: %s\n", request->headers[i]);
@@ -229,7 +231,7 @@ static void _on_ws_response(ws_s *s,
 			dprintf(fd, "%u ", response->status);
 		dprintf(fd, "%s", response->message);
 		if (response->has_id)
-			dprintf(fd, " (id: %lu)", response->id);
+			dprintf(fd, " (id: %" PRIu64 ")", response->id);
 		dprintf(fd, "\n");
 		for (size_t i=0; i<response->n_headers; i++)
 			dprintf(fd, "%s\n", response->headers[i]);

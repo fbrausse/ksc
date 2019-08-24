@@ -153,7 +153,7 @@ static char * ack_message_path(const Signalservice__Envelope *e)
 {
 	return e->serverguid
 	       ? ksc_ckprintf("/v1/messages/uuid/%s", e->serverguid)
-	       : ksc_ckprintf("/v1/messages/%s/%lu", e->source, e->timestamp);
+	       : ksc_ckprintf("/v1/messages/%s/%" PRIu64, e->source, e->timestamp);
 }
 
 static int received_ciphertext(signal_buffer **plaintext, uint8_t *content,
