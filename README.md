@@ -5,10 +5,22 @@ branch at the linked URL if not specified otherwise):
 
 * Installed libraries (found by `pkg-config`(1), see below for customization):
   - libsignal-protocol-c: https://github.com/fbrausse/libsignal-protocol-c
+    ```
+    mkdir build
+    cd build
+    cmake -DCMAKE_INSTALL_PREFIX=/some/prefix/path ..
+    make install
+    ```
   - facil.io (branch v0.7.x): https://github.com/fbrausse/facil.io
     including TLS support (requires `openssl-1.1.x`(1))
+    ```
+    make static-libs # should print "Detected the OpenSSL library, setting HAVE_OPENSSL"
+    ```
   - kjson: https://github.com/fbrausse/kjson
     set in the `make` variable `KJSON_PATH`.
+    ```
+    make libkjson.a
+    ```
 
 * A copy of (the protocol buffer definitions from)
   libsignal-service-java: https://github.com/Turasa/libsignal-service-java
