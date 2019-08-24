@@ -393,11 +393,11 @@ static fio_tls_s * signal_tls(const char *cert_path)
 	fio_tls_s *tls = fio_tls_new(NULL, NULL, NULL, NULL);
 	assert(tls);
 	assert((intptr_t)tls != -1);
-	fio_tls_trust(tls, cert_path);
+	if (cert_path)
+		fio_tls_trust(tls, cert_path);
 	return tls;
 }
 
-#ifdef KSIGNAL_SERVER_CERT
 intptr_t (ksc_ws_connect_raw)(const char *url, struct ksc_ws_connect_raw_args h)
 {
 	LOGL(NOTE, h.log, "signal ws connect to %s\n", url);
@@ -410,7 +410,7 @@ intptr_t (ksc_ws_connect_raw)(const char *url, struct ksc_ws_connect_raw_args h)
 		.on_close    = _signal_ws_on_close,
 		.udata       = memdup(&h, sizeof(h)),
 	};
-	fio_tls_s *tls = signal_tls((KSIGNAL_SERVER_CERT));
+	fio_tls_s *tls = signal_tls(h.server_cert_path);
 	intptr_t r = http_connect(url, NULL,
 	                     .on_request = _on_websocket_http_connected,
 	                     .on_response = _on_websocket_http_connected,
@@ -419,6 +419,3 @@ intptr_t (ksc_ws_connect_raw)(const char *url, struct ksc_ws_connect_raw_args h)
 	fio_tls_destroy(tls);
 	return r;
 }
-#else
-# error KSIGNAL_SERVER_CERT not defined (path of pinned server certificate)
-#endif

@@ -14,6 +14,7 @@ struct ksc_ws_connect_service_args {
 	void (*on_close)(intptr_t uuid, void *udata);
 	struct ksc_log_context signal_log_ctx;
 	struct ksc_log *log;
+	const char *server_cert_path;
 	bool on_close_do_reconnect;
 	void *udata;
 };

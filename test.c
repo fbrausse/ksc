@@ -297,6 +297,9 @@ static bool parse_v(char *arg, struct ksc_log *log)
 #ifndef DEFAULT_CLI_CONFIG
 # define DEFAULT_CLI_CONFIG	NULL
 #endif
+#ifndef KSIGNAL_SERVER_CERT
+# define KSIGNAL_SERVER_CERT	NULL
+#endif
 
 #define DIE(code,...) do { fprintf(stderr, __VA_ARGS__); exit(code); } while (0)
 
@@ -305,10 +308,14 @@ int main(int argc, char **argv)
 	struct ksc_log log = KSC_DEFAULT_LOG;
 	log.max_lvl = KSC_LOG_INFO;
 	const char *cli_path = DEFAULT_CLI_CONFIG;
-	for (int opt; (opt = getopt(argc, argv, ":hp:v:")) != -1;)
+	const char *cert_path = KSIGNAL_SERVER_CERT;
+	bool force = false;
+	for (int opt; (opt = getopt(argc, argv, ":c:fhp:v:")) != -1;)
 		switch (opt) {
+		case 'c': cert_path = optarg; break;
+		case 'f': force = true; break;
 		case 'h':
-			fprintf(stderr, "usage: %s [-p CLI_CONFIG_PATH] [-v ARG]\n", argv[0]);
+			fprintf(stderr, "usage: %s [-c CERT_PATH] [-f] [-p CLI_CONFIG_PATH] [-v ARG]\n", argv[0]);
 			exit(0);
 		case 'p': cli_path = optarg; break;
 		case 'v':
@@ -322,6 +329,18 @@ int main(int argc, char **argv)
 
 	if (!cli_path) {
 		fprintf(stderr, "require path to JSON config file\n");
+		return 1;
+	}
+
+	struct stat st;
+	if (cert_path && stat(cert_path, &st) == -1) {
+		fprintf(stderr, "error accessing certificate path '%s': %s\n",
+		        cert_path, strerror(errno));
+		return 1;
+	}
+	if (!cert_path && !force) {
+		fprintf(stderr, "no pinned server certificate, refusing to "
+		        "connect (use '-f' to circumvent this warning)\n");
 		return 1;
 	}
 
@@ -354,6 +373,7 @@ int main(int argc, char **argv)
 			.on_close = on_close_do_stop,
 			.signal_log_ctx = { "signal ctx", "95" /* bright magenta */ },
 			.log = &ctx.log,
+			.server_cert_path = cert_path,
 			.udata = &ctx
 		);
 		r = uuid && *uuid >= 0 ? 0 : 1;

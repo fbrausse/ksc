@@ -91,7 +91,7 @@ test: $(OBJS)
 
 $(OBJS): %.o: %.c Makefile protos
 
-ksignal-ws.o: override CPPFLAGS += -DKSIGNAL_SERVER_CERT='"$(TS_SERVER_CERT)"'
+test.o: override CPPFLAGS += -DKSIGNAL_SERVER_CERT='"$(TS_SERVER_CERT)"'
 
 $(PROTO_FILES:.proto=.pb-c.c) $(PROTO_FILES:.proto=.pb-c.h): protos
 

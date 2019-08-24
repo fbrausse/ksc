@@ -56,6 +56,7 @@ struct ksc_ws_connect_raw_args {
 	void (*on_shutdown)(ws_s *s, void *udata);
 	void (*on_close)(intptr_t uuid, void *udata);
 	struct ksc_log *log;
+	const char *server_cert_path;
 	void *udata;
 };
 

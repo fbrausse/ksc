@@ -469,6 +469,7 @@ intptr_t * (ksc_ws_connect_service)(struct json_store *js,
 		.udata = ksc,
 		.on_close = on_close,
 		.on_shutdown = on_shutdown,
+		.server_cert_path = args.server_cert_path,
 		.log = args.log,
 	);
 	return &ksc->uuid;
