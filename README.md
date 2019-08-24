@@ -5,6 +5,7 @@ Requires the following prerequisites:
 * Installed libraries (found by `pkg-config`(1), see below for customization):
   - libsignal-protocol-c: https://github.com/fbrausse/libsignal-protocol-c
   - facil.io: https://github.com/fbrausse/facil.io
+    including TLS support (requires `openssl-1.1.x`(1) as of facil-v0.7)
   - kjson: https://github.com/fbrausse/kjson
 
 * A copy of (the protocol buffer definitions from)
@@ -24,3 +25,25 @@ If you don't plan to install this software, in `default.mk` you should also set
 ```
 my_datadir = share
 ```
+
+The `make` variable `GCRYPT` can be set to use `libgcrypt` instead of `openssl`
+for any signal-related processing.
+
+
+How to run
+==========
+`make` builds an executable `test` which connects to the Signal server
+websocket, listens for incoming requests (such as messages), and decrypts and
+prints received messages to standard output.
+
+The persistent state of the protocol / Signal account is stored in a JSON file
+the path to which is given `test` via parameter `-p`. See `-h` for a short help
+message.
+
+The JSON protocol state file is compatible with that used by
+[`signal-cli`](https://github.com/AsamK/signal-cli/),
+[`signald`](https://gitlab.com/thefinn93/signald) and
+[`scli`](https://github.com/fbrausse/scli).
+POSIX locks are employed in a cooperative fashion such that the state file
+won't be modified by any two processes `test`, `signal-cli` or `signald`
+simultaneously.
