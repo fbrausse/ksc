@@ -12,6 +12,7 @@ branch at the linked URL if not specified otherwise):
 
 * A copy of (the protocol buffer definitions from)
   libsignal-service-java: https://github.com/Turasa/libsignal-service-java
+  (commit `4f46fa53938a5e61f88967f755c7476ac501a754`)
   set in the `make` variable `SERVICE_PROTO_PATH`.
 
 Customization
