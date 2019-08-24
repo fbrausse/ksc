@@ -365,8 +365,9 @@ static void _on_websocket_http_connected(http_s *h) {
     h->path = fiobj_str_new("/", 1);
   }
 #ifdef SIGNAL_USER_AGENT
-  fio_hash_set(h->headers, fiobj_str_new("X-Signal-Agent: " SIGNAL_USER_AGENT,
-                                         sizeof("X-Signal-Agent: " SIGNAL_USER_AGENT)-1));
+  fiobj_hash_set(h->headers,
+                 fiobj_str_new("X-Signal-Agent", sizeof("X-Signal-Agent")-1),
+                 fiobj_str_new(SIGNAL_USER_AGENT, sizeof(SIGNAL_USER_AGENT)-1));
 #endif
   int r = (http_upgrade2ws)(h, *s);
   LOGL_(r ? KSC_LOG_ERROR : KSC_LOG_DEBUG, hh->log, "http_upgrade2ws: %d\n", r);

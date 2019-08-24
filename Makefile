@@ -1,6 +1,9 @@
 # default target
 all:
 
+PROJECT_NAME = ksc
+PROJECT_VERSION = 0.1
+
 CFLAGS  ?= -g
 LDFLAGS ?= -Wl,--as-needed
 OPTS    ?= #-flto
@@ -32,6 +35,7 @@ CSTD = -std=c11
 override CPPFLAGS += \
 	-D_POSIX_C_SOURCE=200809L \
 	-D_XOPEN_SOURCE=500 \
+	-DSIGNAL_USER_AGENT='"$(PROJECT_NAME) $(PROJECT_VERSION)"' \
 	$(CSTD) \
 
 override CLDFLAGS := \
