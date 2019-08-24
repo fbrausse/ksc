@@ -23,7 +23,7 @@ ifdef GCRYPT
   CRYPT_OBJS = crypto-gcrypt.o
   test: override LDLIBS += -lgcrypt
 else
-  CRYPT_OBJS = crypto-openssl-11.o
+  CRYPT_OBJS = crypto-openssl-$(shell $(PKG_CONFIG) --modversion openssl | cut -c1,3).o
   PKGS += libcrypto
 endif
 
