@@ -1,3 +1,11 @@
+/*
+ * ksignal-ws.c
+ *
+ * Copyright 2019 Franz Brauße <brausse@informatik.uni-trier.de>
+ *
+ * This file is part of ksc.
+ * See the LICENSE file for terms of distribution.
+ */
 
 #include "ksignal-ws.h"
 
