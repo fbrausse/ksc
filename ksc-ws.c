@@ -369,7 +369,7 @@ static struct ksignal_ctx * ksignal_ctx_create(struct json_store *js,
 {
 	struct ksignal_ctx *ksc = NULL;
 
-	ksc = calloc(1, sizeof(*ksc));
+	ksc = ksc_calloc(1, sizeof(*ksc));
 
 	pthread_mutexattr_t attr;
 	pthread_mutexattr_init(&attr);

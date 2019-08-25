@@ -13,7 +13,42 @@
 #define KSC_STR(x)	#x
 #define KSC_XSTR(x)	KSC_STR(x)
 
-static inline void * memdup(void *p, size_t sz) { return memcpy(malloc(sz), p, sz); }
+#ifdef KSC_DEBUG_MEM_USAGE
+extern size_t ksc_alloc_buckets[64];
+extern size_t ksc_alloc_total;
+
+static inline void ksc_count_alloc(size_t n)
+{
+	for (size_t i=0; i<ARRAY_SIZE(ksc_alloc_buckets); i++)
+		if (n < (size_t)1 << i) {
+			ksc_alloc_buckets[i]++;
+			break;
+		}
+	ksc_alloc_total += n;
+}
+#else
+static inline void ksc_count_alloc(size_t n) { (void)n; }
+#endif
+
+static inline void * ksc_malloc(size_t n)
+{
+	ksc_count_alloc(n);
+	return malloc(n);
+}
+
+static inline void * ksc_calloc(size_t n, size_t sz)
+{
+	ksc_count_alloc(n * sz);
+	return calloc(n, sz);
+}
+
+static inline void * ksc_realloc(void *ptr, size_t n)
+{
+	ksc_count_alloc(n);
+	return realloc(ptr, n);
+}
+
+static inline void * memdup(void *p, size_t sz) { return memcpy(ksc_malloc(sz), p, sz); }
 
 #define KJSON_VALUE_INIT { .type = KJSON_VALUE_NULL, }
 

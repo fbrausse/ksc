@@ -285,7 +285,7 @@ static bool parse_v(char *arg, struct ksc_log *log)
 	if (!parse_v_lvl(colon+1, &lvl))
 		return false;
 	struct ksc_log__context_lvl *it;
-	it = malloc(sizeof(*it));
+	it = ksc_malloc(sizeof(*it));
 	it->max_lvl = lvl;
 	*colon = '\0';
 	it->desc = arg;
@@ -400,6 +400,15 @@ int main(int argc, char **argv)
 		      "json_store_save returned %d\n", r);
 	}
 	json_store_destroy(js);
+
+#ifdef KSC_DEBUG_MEM_USAGE
+	for (unsigned i=0; i<ARRAY_SIZE(ksc_alloc_buckets); i++) {
+		size_t n = ksc_alloc_buckets[i];
+		if (n)
+			LOGL(DEBUG, &ctx.log, "alloc < 2^%2u: %zu\n", i, n);
+	}
+	LOGL(DEBUG, &ctx.log, "total alloced: %zu\n", ksc_alloc_total);
+#endif
 
 	for (struct ksc_log__context_lvl *it, *jt = ctx.log.context_lvls; (it = jt);) {
 		jt = it->next;

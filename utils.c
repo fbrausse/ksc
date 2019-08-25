@@ -7,6 +7,11 @@
 #include <assert.h>
 #include <stdarg.h>
 
+#ifdef KSC_DEBUG_MEM_USAGE
+size_t ksc_alloc_buckets[64];
+size_t ksc_alloc_total;
+#endif
+
 static const char BASE64_ENC[] =
 	"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
@@ -80,7 +85,7 @@ char * ksc_ckprintf(const char *fmt, ...)
 	va_end(ap);
 	if (n == -1)
 		return NULL;
-	char *buf = malloc(n+1);
+	char *buf = ksc_malloc(n+1);
 	va_start(ap, fmt);
 	n = vsnprintf(buf, n+1, fmt, ap);
 	va_end(ap);

@@ -226,7 +226,7 @@ static int decrypt_func(signal_buffer **output, int cipher,
 	if (gr)
 		FAIL(cipher_fail, "error on gcry_cipher_final: %x\n", gr);
 
-	uint8_t *body = malloc(ciphertext_len);
+	uint8_t *body = ksc_malloc(ciphertext_len);
 	gr = gcry_cipher_decrypt(ci, body, ciphertext_len, ciphertext, ciphertext_len);
 	if (gr)
 		FAIL(cipher_fail2, "error on gcry_cipher_decrypt: %x\n", gr);

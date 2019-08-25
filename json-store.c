@@ -46,7 +46,7 @@ static struct kjson_value * (kjson_array_push_back)(struct kjson_array *arr,
                                                     struct kjson_value v)
 {
 	/* XXX: inefficient */
-	arr->data = realloc(arr->data, sizeof(*arr->data) * (arr->n+1));
+	arr->data = ksc_realloc(arr->data, sizeof(*arr->data) * (arr->n+1));
 	struct kjson_value *r = &arr->data[arr->n++];
 	*r = v;
 	return r;
@@ -59,7 +59,7 @@ struct kjson_object_entry * (kjson_object_push_back)(struct kjson_object *obj,
                                                      struct kjson_object_entry v)
 {
 	/* XXX: inefficient */
-	obj->data = realloc(obj->data, sizeof(*obj->data) * (obj->n+1));
+	obj->data = ksc_realloc(obj->data, sizeof(*obj->data) * (obj->n+1));
 	struct kjson_object_entry *e = &obj->data[obj->n++];
 	*e = v;
 	return e;
@@ -95,7 +95,7 @@ static char * buffer_alloc(struct buffer *buf, size_t n)
 	size_t sz = buf->data_sz + n;
 	if (sz > buf->data_cap) {
 		size_t new_cap = MAX(sz, 2 * buf->data_cap);
-		void *p = realloc(buf->data, new_cap);
+		void *p = ksc_realloc(buf->data, new_cap);
 		if (!p)
 			return NULL;
 		buf->data_cap = new_cap;
@@ -270,7 +270,7 @@ struct json_store * json_store_create(const char *path, struct ksc_log *log)
 		LOGL(ERROR, log, "%s: lockf: %s\n", path, strerror(errno));
 		goto fail;
 	}
-	js = calloc(1, sizeof(struct json_store));
+	js = ksc_calloc(1, sizeof(struct json_store));
 	if (!js) {
 		LOGL(ERROR, log, "calloc: %s\n", strerror(errno));
 		goto fail;
@@ -490,20 +490,20 @@ static struct kjson_value json_value_dup(struct kjson_value *v)
 	case KJSON_VALUE_NUMBER_DOUBLE:
 		break;
 	case KJSON_VALUE_STRING:
-		r.s.begin = memcpy(malloc(r.s.len + 1), r.s.begin, r.s.len);
+		r.s.begin = memcpy(ksc_malloc(r.s.len + 1), r.s.begin, r.s.len);
 		r.s.begin[r.s.len] = '\0';
 		break;
 	case KJSON_VALUE_ARRAY:
-		r.a.data = malloc(sizeof(*r.a.data) * r.a.n);
+		r.a.data = ksc_malloc(sizeof(*r.a.data) * r.a.n);
 		for (size_t i=0; i<r.a.n; i++)
 			r.a.data[i] = json_value_dup(&v->a.data[i]);
 		break;
 	case KJSON_VALUE_OBJECT:
-		r.o.data = malloc(sizeof(*r.o.data) * r.o.n);
+		r.o.data = ksc_malloc(sizeof(*r.o.data) * r.o.n);
 		for (size_t i=0; i<r.o.n; i++) {
 			struct kjson_string *t = &r.o.data[i].key;
 			struct kjson_string *s = &v->o.data[i].key;
-			t->begin = memcpy(malloc(s->len + 1), s->begin, s->len);
+			t->begin = memcpy(ksc_malloc(s->len + 1), s->begin, s->len);
 			t->begin[s->len] = '\0';
 			t->len = s->len;
 			r.o.data[i].value = json_value_dup(&v->o.data[i].value);
@@ -521,7 +521,7 @@ static int sess_store_session_func(const signal_protocol_address *address,
 	struct json_store *js = user_data;
 	KSC_DEBUGL(DEBUG, js->log, "in %s()\n", __FUNCTION__);
 	struct kjson_value *st = sess_store(js);
-	char *record_enc = malloc((record_len + 2) / 3 * 4 + 1);
+	char *record_enc = ksc_malloc((record_len + 2) / 3 * 4 + 1);
 	assert(record_enc);
 	ssize_t n = ksc_base64_encode(record_enc, record, record_len);
 	assert(n >= 0);
@@ -721,7 +721,7 @@ static int prek_store_pre_key(uint32_t pre_key_id, uint8_t *record,
 	struct kjson_value *st = prek_store(js);
 	if (prek_lookup(st, pre_key_id))
 		return SG_ERR_INVALID_KEY_ID; /* already exists */
-	char *record_enc = malloc((record_len + 2) / 3 * 4 + 1);
+	char *record_enc = ksc_malloc((record_len + 2) / 3 * 4 + 1);
 	assert(record_enc);
 	ssize_t n = ksc_base64_encode(record_enc, record, record_len);
 	assert(n >= 0);
@@ -850,7 +850,7 @@ static int sipk_store_signed_pre_key(uint32_t signed_pre_key_id,
 	struct kjson_value *st = sipk_store(js);
 	if (prek_lookup(st, signed_pre_key_id))
 		return SG_ERR_INVALID_KEY_ID; /* already exists */
-	char *record_enc = malloc((record_len + 2) / 3 * 4 + 1);
+	char *record_enc = ksc_malloc((record_len + 2) / 3 * 4 + 1);
 	assert(record_enc);
 	ssize_t n = ksc_base64_encode(record_enc, record, record_len);
 	assert(n >= 0);
@@ -1066,7 +1066,7 @@ static int idk_save_identity(const signal_protocol_address *address,
 		old_idk = *idk;
 	if (key_data) {
 		struct kjson_string record_str = { NULL, 0 };
-		char *record_enc = malloc((key_len + 2) / 3 * 4 + 1);
+		char *record_enc = ksc_malloc((key_len + 2) / 3 * 4 + 1);
 		assert(record_enc);
 		ssize_t n = ksc_base64_encode(record_enc, key_data, key_len);
 		assert(n >= 0);

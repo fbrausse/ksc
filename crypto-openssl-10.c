@@ -16,7 +16,7 @@ static int hmac_sha256_init_func(void **hmac_context, const uint8_t *key,
 {
 	HMAC_CTX *hmac_ctx;
 
-	hmac_ctx = malloc(sizeof(*hmac_ctx));
+	hmac_ctx = ksc_malloc(sizeof(*hmac_ctx));
 	if (!hmac_ctx)
 		return SG_ERR_NOMEM;
 
@@ -121,7 +121,7 @@ static int decrypt_func(signal_buffer **output, int cipher,
 		EVP_CIPHER_CTX_set_padding(cipher_ctx, 0);
 
 	// allocate result buffer
-	out_buf = malloc(sizeof(uint8_t) *
+	out_buf = ksc_malloc(sizeof(uint8_t) *
 	                 (ciphertext_len + EVP_MAX_BLOCK_LENGTH));
 	if (!out_buf) {
 		ret_val = SG_ERR_NOMEM;

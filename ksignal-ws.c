@@ -63,7 +63,7 @@ static int signal_ws_send(ws_s *s, ProtobufCMessage *request_or_response)
 	size_t n = signalservice__web_socket_message__get_packed_size(&ws_msg);
 	fio_str_info_s si = {
 		.capa = 0,
-		.data = malloc(n),
+		.data = ksc_malloc(n),
 	};
 	si.len = signalservice__web_socket_message__pack(&ws_msg,
 	                                                 (uint8_t *)si.data);
@@ -139,7 +139,7 @@ int (ksc_ws_send_request)(ws_s *s, char *verb, char *path,
 	struct requested_subscription *p = NULL;
 	uint64_t ptr;
 	if (args.on_response) {
-		p = malloc(sizeof(struct requested_subscription));
+		p = ksc_malloc(sizeof(struct requested_subscription));
 		if (!args.id) {
 			struct timeval tv;
 			gettimeofday(&tv, NULL);
@@ -401,7 +401,7 @@ static fio_tls_s * signal_tls(const char *cert_path)
 intptr_t (ksc_ws_connect_raw)(const char *url, struct ksc_ws_connect_raw_args h)
 {
 	LOGL(NOTE, h.log, "signal ws connect to %s\n", url);
-	websocket_settings_s *ws_settings = malloc(sizeof(websocket_settings_s));
+	websocket_settings_s *ws_settings = ksc_malloc(sizeof(websocket_settings_s));
 	*ws_settings = (websocket_settings_s){
 		.on_open     = _signal_ws_on_open,
 		.on_message  = _signal_ws_on_message,

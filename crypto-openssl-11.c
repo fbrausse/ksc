@@ -5,6 +5,8 @@
 
 #include <signal/signal_protocol.h>
 
+#include "utils.h"
+
 static int random_func(uint8_t *data, size_t len, void *user_data)
 {
 	return RAND_bytes(data, len) ? 0 : SG_ERR_UNKNOWN;
@@ -115,7 +117,7 @@ static int decrypt_func(signal_buffer **output, int cipher,
 		EVP_CIPHER_CTX_set_padding(cipher_ctx, 0);
 
 	// allocate result buffer
-	out_buf = malloc(sizeof(uint8_t) *
+	out_buf = ksc_malloc(sizeof(uint8_t) *
 	                 (ciphertext_len + EVP_MAX_BLOCK_LENGTH));
 	if (!out_buf) {
 		ret_val = SG_ERR_NOMEM;
