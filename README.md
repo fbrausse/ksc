@@ -13,21 +13,23 @@ branch at the linked URL if not specified otherwise):
     cmake -DCMAKE_INSTALL_PREFIX=/some/prefix/path ..
     make install
     ```
-  - facil.io (branch v0.7.x): https://github.com/fbrausse/facil.io
+  - facil.io (branch `0.7.x`): https://github.com/fbrausse/facil.io
     including TLS support (requires `openssl-1.1.x`(1))
     ```
     make static-libs # should print "Detected the OpenSSL library, setting HAVE_OPENSSL"
     ```
   - kjson: https://github.com/fbrausse/kjson
-    set in the `make` variable `KJSON_PATH`.
+    The path to the `kjson` directory is to be set in the `make` variable `KJSON_PATH`
+    when building `ksc`.
     ```
     make libkjson.a
     ```
 
 * A copy of (the protocol buffer definitions from)
   libsignal-service-java: https://github.com/Turasa/libsignal-service-java
-  (commit `4f46fa53938a5e61f88967f755c7476ac501a754`)
-  set in the `make` variable `SERVICE_PROTO_PATH`.
+  (commit `4f46fa53938a5e61f88967f755c7476ac501a754`).
+  The path to the `protobuf` sub-directory is to be set in the `make` variable
+  `SERVICE_PROTO_PATH` when building `ksc`.
 
 Customization
 -------------
