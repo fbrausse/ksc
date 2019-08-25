@@ -73,3 +73,45 @@ The default log level is `info` and can be set to `debug`, `note`, `info`,
 `warn`, `error` or `none` using the parameter `-v`. An optional prefix
 controls logging for a specific subsystem, e.g., `-v ksignal-ws:note` will
 result in outputs of various network-related events.
+
+API
+===
+General notes
+-------------
+Many of the functions exported as global in `ksc`'s header files follow a
+scheme for passing of optional arguments I copied from `facil.io`:
+Suppose a function `f` takes mandatory arguments `int k` and `const char *path`
+as well as some optional arguments `struct ksc_log *log`, `bool do_something`,
+and a callback `void (*on_event)(struct event_data *data, void *udata)` as well
+as a pointer `void *udata` to user-data which is passed on to the event handler.
+
+In C there is no such concept of "optional arguments" to a function. The way
+`facil.io` handles these in my opinion is quite elegant: It defines a
+`struct` holding all optional arguments:
+```
+struct f_args {
+	struct ksc_log *log;
+	bool do_something;
+	void (*on_event)(struct event_data *data, void *udata);
+	void *udata;
+};
+```
+and then shadows the declaration of the function `f`
+```
+int f(int k, const char *path, struct f_args args);
+```
+by a macro with the same name:
+ ```
+ #define f(k, path, ...) f(k, path, (struct f_args){ __VA_ARGS__ })
+ ```
+which allows calls to `f` to look like this:
+```
+int res = f(42, "some/path",
+            .log = my_log,
+            .on_event = handle_f_event,
+            .udata = my_udata_for_handle_f_event);
+```
+Note that `.do_something` is not explicitely given at the function call,
+instead by the `(struct f_args){ __VA_ARGS__ }` initialization it defaults to
+`false`, the same would happen if pointer arguments were left out - they would
+default to `NULL`.
