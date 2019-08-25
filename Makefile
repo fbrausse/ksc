@@ -12,10 +12,11 @@ CLDFLAGS ?= \
 	#-pthread \
 
 PKG_CONFIG ?= pkg-config
+PROTOC_C   ?= protoc-c
 
 -include default.mk
 
-my_datadir ?= $(datadir)/ksignal
+my_datadir ?= $(datadir)/ksc
 
 TS_SERVER_CERT = $(my_datadir)/whisper.store.asn1
 
@@ -96,7 +97,7 @@ test.o: override CPPFLAGS += -DKSIGNAL_SERVER_CERT='"$(TS_SERVER_CERT)"'
 $(PROTO_FILES:.proto=.pb-c.c) $(PROTO_FILES:.proto=.pb-c.h): protos
 
 protos: $(addprefix $(SERVICE_PROTO_PATH)/,$(SERVICE_PROTO_FILES)) $(LOCAL_PROTO_FILES)
-	protoc-c --c_out=. --proto_path=$(SERVICE_PROTO_PATH) --proto_path=. $(PROTO_FILES) && touch $@
+	$(PROTOC_C) --c_out=. --proto_path=$(SERVICE_PROTO_PATH) --proto_path=. $(PROTO_FILES) && touch $@
 
 clean:
 	$(RM) $(OBJS) $(OBJS:.o=.d) test protos $(PROTO_FILES:.proto=.pb-c.c) $(PROTO_FILES:.proto=.pb-c.h)

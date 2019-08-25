@@ -5,6 +5,8 @@ branch at the linked URL if not specified otherwise):
 
 * GNU make (1)
 
+* The executable `protoc-c` from `protobuf-c`: https://github.com/protobuf-c/protobuf-c
+
 * Installed libraries (found by `pkg-config`(1), see below for customization):
   - libsignal-protocol-c: https://github.com/fbrausse/libsignal-protocol-c
     ```
