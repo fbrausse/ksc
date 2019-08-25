@@ -20,12 +20,10 @@ branch at the linked URL if not specified otherwise):
     ```
     make static-libs # should print "Detected the OpenSSL library, setting HAVE_OPENSSL"
     ```
-* kjson: https://github.com/fbrausse/kjson
-  The path to the `kjson` directory is to be set in the `make` variable `KJSON_PATH`
-  when building `ksc`.
-  ```
-  make libkjson.a
-  ```
+  - kjson: https://github.com/fbrausse/kjson
+    ```
+    make libkjson.a
+    ```
 
 * A copy of (the protocol buffer definitions from)
   libsignal-service-java: https://github.com/Turasa/libsignal-service-java
@@ -35,9 +33,9 @@ branch at the linked URL if not specified otherwise):
 
 Customization
 -------------
-For custom install paths of the above libraries (except kjson), define
-the PKG_CONFIG variable in a new file `default.mk` which is included in the
-main `Makefile`, e.g. like this:
+For custom install paths of the above libraries, define the PKG_CONFIG variable
+in a new file `default.mk` which is included in the main `Makefile`, e.g. like
+this:
 ```
 PKG_CONFIG := PKG_CONFIG_PATH=/path/to/lib/pkgconfig $(PKG_CONFIG)
 ```
@@ -49,6 +47,8 @@ my_datadir = share
 
 The `make` variable `GCRYPT` can be set to use `libgcrypt` instead of `openssl`
 for any signal-related processing.
+
+A sample `default.mk` is included as `default.mk.sample`.
 
 
 How to run

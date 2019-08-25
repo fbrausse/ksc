@@ -20,7 +20,7 @@ my_datadir ?= $(datadir)/ksc
 
 TS_SERVER_CERT = $(my_datadir)/whisper.store.asn1
 
-PKGS = facil libsignal-protocol-c
+PKGS = facil libsignal-protocol-c kjson
 
 ifdef GCRYPT
   CRYPT_OBJS = crypto-gcrypt.o
@@ -47,7 +47,6 @@ override CLDFLAGS := \
 override CFLAGS := \
 	-MD \
 	$(shell $(PKG_CONFIG) --cflags libsignal-protocol-c,$(PKGS)) \
-	-I$(KJSON_PATH) \
 	-Wall -Wextra \
 	$(CLDFLAGS) \
 	$(CFLAGS) \
@@ -55,11 +54,10 @@ override CFLAGS := \
 test: override LDFLAGS := \
 	$(shell $(PKG_CONFIG) --libs-only-L --libs-only-other $(PKGS)) \
 	$(subst -L,-Xlinker -rpath -Xlinker ,$(shell $(PKG_CONFIG) --libs-only-L $(PKGS))) \
-	-L$(KJSON_PATH) \
 	$(CLDFLAGS) \
 	$(LDFLAGS) \
 
-test: override LDLIBS += $(shell $(PKG_CONFIG) --libs-only-l $(PKGS)) -lkjson
+test: override LDLIBS += $(shell $(PKG_CONFIG) --libs-only-l $(PKGS))
 
 OBJS = \
 	test.o \
