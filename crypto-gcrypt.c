@@ -1,5 +1,6 @@
 
 #include "crypto.h"
+#include "utils.h"
 
 #include <gcrypt.h>
 
@@ -234,7 +235,7 @@ static int decrypt_func(signal_buffer **output, int cipher,
 
 	/* remove PKCS5Padding */
 	size_t size = ciphertext_len;
-	if (padding && !pkcs5_unpad(body, &size))
+	if (padding && !ksc_pkcs5_unpad(body, &size))
 		goto fail;
 
 	*output = signal_buffer_create(body, size);
