@@ -4,9 +4,10 @@
 
 #include <stdbool.h>
 #include <stdio.h>
-#include <kjson.h>
 #include <stdlib.h>
 #include <string.h>
+
+#include <kjson.h>
 
 #define ARRAY_SIZE(...)	(sizeof(__VA_ARGS__)/sizeof(*(__VA_ARGS__)))
 
