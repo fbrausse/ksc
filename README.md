@@ -18,12 +18,12 @@ branch at the linked URL if not specified otherwise):
     ```
     make static-libs # should print "Detected the OpenSSL library, setting HAVE_OPENSSL"
     ```
-  - kjson: https://github.com/fbrausse/kjson
-    The path to the `kjson` directory is to be set in the `make` variable `KJSON_PATH`
-    when building `ksc`.
-    ```
-    make libkjson.a
-    ```
+* kjson: https://github.com/fbrausse/kjson
+  The path to the `kjson` directory is to be set in the `make` variable `KJSON_PATH`
+  when building `ksc`.
+  ```
+  make libkjson.a
+  ```
 
 * A copy of (the protocol buffer definitions from)
   libsignal-service-java: https://github.com/Turasa/libsignal-service-java
