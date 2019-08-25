@@ -202,9 +202,9 @@ static int recv_messages(ws_s *ws, struct ksc_signal_response *r, void *udata)
 	(void)ws;
 }
 
-static void send_get_profile(ws_s *s, void *udata)
+static void send_get_profile(ws_s *s, const struct ksc_ws *kws)
 {
-	struct ksc_ctx *ksc = udata;
+	struct ksc_ctx *ksc = ksc_ws_get_udata(kws);
 #if 0 && defined(DEFAULT_GET_PROFILE_NUMBER)
 	// works
 	ksc_ws_send_request(s, "GET",
@@ -228,10 +228,11 @@ static void send_get_profile(ws_s *s, void *udata)
 #endif
 }
 
-static bool on_content(ws_s *ws, const Signalservice__Envelope *e,
-                       const Signalservice__Content *c, void *udata)
+static bool on_content(ws_s *ws, const struct ksc_ws *kws,
+                       const Signalservice__Envelope *e,
+                       const Signalservice__Content *c)
 {
-	struct ksc_ctx *ksc = udata;
+	struct ksc_ctx *ksc = ksc_ws_get_udata(kws);
 	if (ksc_log_prints(KSC_LOG_INFO, &ksc->log, &log_ctx)) {
 		LOG(INFO, "received content:\n");
 		ksc_print_envelope(e, ksc->log.fd,
@@ -374,8 +375,7 @@ int main(int argc, char **argv)
 		                           .on_close = on_close_do_stop,
 		                           .udata = &ctx) < 0;
 	} else if (password) {
-		intptr_t *uuid;
-		uuid = ksc_ws_connect_service(js,
+		const struct ksc_ws *kws = ksc_ws_connect_service(js,
 			.on_content = on_content,
 			.on_open = send_get_profile,
 			.on_close = on_close_do_stop,
@@ -384,7 +384,7 @@ int main(int argc, char **argv)
 			.server_cert_path = cert_path,
 			.udata = &ctx
 		);
-		r = uuid && *uuid >= 0 ? 0 : 1;
+		r = kws ? 0 : 1;
 	} else {
 		fprintf(stderr, "don't know what to do, username but no password\n");
 		r = 1;

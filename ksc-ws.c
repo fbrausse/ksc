@@ -89,7 +89,7 @@ void ksc_print_envelope(const Signalservice__Envelope *e, int fd, bool detail)
 	}
 }
 
-struct ksignal_ctx {
+struct ksc_ws {
 	struct json_store *js;
 	signal_context *ctx;
 	signal_protocol_store_context *psctx;
@@ -100,9 +100,19 @@ struct ksignal_ctx {
 	pthread_mutex_t signal_mtx;
 };
 
+intptr_t ksc_ws_get_uuid(const struct ksc_ws *kws)
+{
+	return kws->uuid;
+}
+
+void * ksc_ws_get_udata(const struct ksc_ws *kws)
+{
+	return kws->args.udata;
+}
+
 static bool received_message(ws_s *ws, const Signalservice__Envelope *e,
                              uint8_t *text, size_t size,
-                             struct ksignal_ctx *ksc)
+                             struct ksc_ws *ksc)
 {
 	/*
 	printf("decrypted Content:\n");
@@ -126,15 +136,16 @@ static bool received_message(ws_s *ws, const Signalservice__Envelope *e,
 	}
 	bool r = true;
 	if (ksc->args.on_content)
-		r = ksc->args.on_content(ws, e, c, ksc->args.udata);
+		r = ksc->args.on_content(ws, ksc, e, c);
 	signalservice__content__free_unpacked(c, NULL);
 	return r;
+	(void)ws;
 }
 
 static int delete_request_on_response(ws_s *ws, struct ksc_signal_response *r,
                                       void *udata)
 {
-	struct ksignal_ctx *ksc = udata;
+	struct ksc_ws *ksc = udata;
 	LOG_(r->status == 204 ? KSC_LOG_DEBUG : KSC_LOG_WARN,
 	     "deletion request response line: %d %s\n", r->status, r->message);
 	return 0;
@@ -143,7 +154,7 @@ static int delete_request_on_response(ws_s *ws, struct ksc_signal_response *r,
 
 struct delete_request_args {
 	ws_s *ws;
-	struct ksignal_ctx *ksc;
+	struct ksc_ws *ksc;
 };
 
 static void delete_request(void *udata1, void *udata2)
@@ -165,7 +176,7 @@ static char * ack_message_path(const Signalservice__Envelope *e)
 }
 
 static int received_ciphertext(signal_buffer **plaintext, uint8_t *content,
-                               size_t size, struct ksignal_ctx *ksc,
+                               size_t size, struct ksc_ws *ksc,
                                session_cipher *cipher)
 {
 	signal_message *msg;
@@ -184,7 +195,7 @@ done:
 }
 
 static int received_pkbundle(signal_buffer **plaintext, uint8_t *content,
-                             size_t size, struct ksignal_ctx *ksc,
+                             size_t size, struct ksc_ws *ksc,
                              session_cipher *cipher)
 {
 	pre_key_signal_message *msg;
@@ -205,11 +216,11 @@ done:
 }
 
 static bool received_envelope(ws_s *ws, const Signalservice__Envelope *e,
-                              struct ksignal_ctx *ksc)
+                              struct ksc_ws *ksc)
 {
 	typedef int received_envelope_handler(signal_buffer **plaintext,
 	                                      uint8_t *content, size_t size,
-	                                      struct ksignal_ctx *ksc,
+	                                      struct ksc_ws *ksc,
 	                                      session_cipher *cipher);
 
 	static received_envelope_handler *const handlers[] = {
@@ -275,7 +286,7 @@ static int handle_request(ws_s *ws, char *verb, char *path, uint64_t *id,
                           size_t n_headers, char **headers,
                           size_t size, uint8_t *body, void *udata)
 {
-	struct ksignal_ctx *ksc = udata;
+	struct ksc_ws *ksc = udata;
 	bool is_enc = is_request_signal_key_encrypted(n_headers, headers);
 	int r = 0;
 
@@ -318,7 +329,7 @@ static int handle_request(ws_s *ws, char *verb, char *path, uint64_t *id,
 	(void)id;
 }
 
-static void ksignal_ctx_destroy(struct ksignal_ctx *ksc)
+static void ksignal_ctx_destroy(struct ksc_ws *ksc)
 {
 	if (ksc->psctx)
 		signal_protocol_store_context_destroy(ksc->psctx);
@@ -331,7 +342,7 @@ static void ksignal_ctx_destroy(struct ksignal_ctx *ksc)
 
 static void ctx_log(int level, const char *message, size_t len, void *user_data)
 {
-	struct ksignal_ctx *ksc = user_data;
+	struct ksc_ws *ksc = user_data;
 	if (ksc->args.log) {
 		enum ksc_log_lvl lvl;
 		switch (level) {
@@ -356,7 +367,7 @@ static void ctx_log(int level, const char *message, size_t len, void *user_data)
 
 static void ctx_lock(void *user_data)
 {
-	struct ksignal_ctx *ksc = user_data;
+	struct ksc_ws *ksc = user_data;
 	LOG(DEBUG, "ctx_lock()\n");
 	int r = pthread_mutex_lock(&ksc->signal_mtx);
 	assert(!r);
@@ -365,17 +376,17 @@ static void ctx_lock(void *user_data)
 
 static void ctx_unlock(void *user_data)
 {
-	struct ksignal_ctx *ksc = user_data;
+	struct ksc_ws *ksc = user_data;
 	LOG(DEBUG, "ctx unlock()\n");
 	int r = pthread_mutex_unlock(&ksc->signal_mtx);
 	assert(!r);
 	(void)r;
 }
 
-static struct ksignal_ctx * ksignal_ctx_create(struct json_store *js,
-                                               struct ksc_log *log)
+static struct ksc_ws * ksignal_ctx_create(struct json_store *js,
+                                          struct ksc_log *log)
 {
-	struct ksignal_ctx *ksc = NULL;
+	struct ksc_ws *ksc = NULL;
 
 	ksc = ksc_calloc(1, sizeof(*ksc));
 
@@ -424,15 +435,15 @@ fail:
 
 static void on_open(ws_s *ws, void *udata)
 {
-	struct ksignal_ctx *ksc = udata;
+	struct ksc_ws *ksc = udata;
 	ksc->reconnecting_during_close = false;
 	if (ksc->args.on_open)
-		ksc->args.on_open(ws, ksc->args.udata);
+		ksc->args.on_open(ws, ksc);
 }
 
 static void on_close(intptr_t uuid, void *udata)
 {
-	struct ksignal_ctx *ksc = udata;
+	struct ksc_ws *ksc = udata;
 	ksc->uuid = -1;
 	if (ksc->args.on_close_do_reconnect) {
 		if (!ksc->reconnecting_during_close) {
@@ -456,21 +467,21 @@ static void on_close(intptr_t uuid, void *udata)
 
 static void on_shutdown(ws_s *s, void *udata)
 {
-	struct ksignal_ctx *ksc = udata;
+	struct ksc_ws *ksc = udata;
 	ksc->args.on_close_do_reconnect = false;
 	(void)s;
 }
 
-intptr_t * (ksc_ws_connect_service)(struct json_store *js,
-                                    struct ksc_ws_connect_service_args args)
+const struct ksc_ws * (ksc_ws_connect_service)(struct json_store *js,
+                                               struct ksc_ws_connect_service_args args)
 {
-	struct ksignal_ctx *ksc = ksignal_ctx_create(js, args.log);
+	struct ksc_ws *ksc = ksignal_ctx_create(js, args.log);
 	if (!ksc) {
 		LOGL(ERROR, args.log, "error init'ing ksignal_ctx\n");
 		return NULL;
 	}
 	ksc->args = args;
-	ksc->uuid = ksc_ws_connect_raw(ksc->url,
+	intptr_t uuid = ksc_ws_connect_raw(ksc->url,
 		.on_open = on_open,
 		.handle_request = handle_request,
 		.handle_response = NULL,
@@ -480,5 +491,8 @@ intptr_t * (ksc_ws_connect_service)(struct json_store *js,
 		.server_cert_path = args.server_cert_path,
 		.log = args.log,
 	);
-	return &ksc->uuid;
+	if (uuid == -1)
+		return NULL;
+	ksc->uuid = uuid;
+	return ksc;
 }
