@@ -151,7 +151,7 @@ cleanup:
 	(void)user_data;
 }
 
-signal_crypto_provider __attribute__((weak)) ksc_crypto_provider = {
+signal_crypto_provider ksc_crypto_provider = {
 	.random_func              = random_func,
 	.hmac_sha256_init_func    = hmac_sha256_init_func,
 	.hmac_sha256_update_func  = hmac_sha256_update_func,
