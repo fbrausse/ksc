@@ -30,6 +30,17 @@ static inline size_t ksc_pkcs5_padded_size(size_t size)
 void   ksc_pkcs5_pad(uint8_t *body, size_t size);
 bool   ksc_pkcs5_unpad(const uint8_t *restrict body, size_t *restrict size);
 
+static inline size_t ksc_one_and_zeroes_padded_size(size_t size,
+                                                    size_t multiple)
+{
+	size++;
+	if (size % multiple)
+		size += multiple - (size % multiple);
+	return size;
+}
+
+void ksc_one_and_zeroes_pad(uint8_t *restrict body, size_t *restrict size,
+                            size_t multiple);
 bool ksc_one_and_zeroes_unpad(const uint8_t *restrict body,
                               size_t *restrict size);
 

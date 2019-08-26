@@ -64,8 +64,9 @@ void ksc_print_envelope(const Signalservice__Envelope *e, int fd, bool detail)
 	}
 	if (e->has_legacymessage) {
 		dprintf(fd, "  has encrypted legacy message of size %zu%s\n",
-		        e->legacymessage.len, detail ? ":" : "");
-		if (detail) {
+		        e->legacymessage.len,
+		        e->legacymessage.len && detail ? ":" : "");
+		if (e->legacymessage.len && detail) {
 			ksc_dprint_hex(fd, e->legacymessage.data,
 			               e->legacymessage.len);
 			dprintf(fd, "\n");
@@ -73,8 +74,8 @@ void ksc_print_envelope(const Signalservice__Envelope *e, int fd, bool detail)
 	}
 	if (e->has_content) {
 		dprintf(fd, "  has encrypted content of size %zu%s\n",
-		        e->content.len, detail ? ":" : "");
-		if (detail) {
+		        e->content.len, e->content.len && detail ? ":" : "");
+		if (e->content.len && detail) {
 			ksc_dprint_hex(fd, e->content.data, e->content.len);
 			dprintf(fd, "\n");
 		}
@@ -175,79 +176,47 @@ static char * ack_message_path(const Signalservice__Envelope *e)
 	       : ksc_ckprintf("/v1/messages/%s/%" PRIu64, e->source, e->timestamp);
 }
 
-static int received_ciphertext(signal_buffer **plaintext, uint8_t *content,
-                               size_t size, struct ksc_ws *ksc,
-                               session_cipher *cipher)
+static int received_ciphertext_or_prekey_bundle(ws_s *ws,
+                                                const Signalservice__Envelope *e,
+                                                struct ksc_ws *ksc)
 {
-	signal_message *msg;
-	int r = signal_message_deserialize(&msg, content, size, ksc->ctx);
-	LOGr(r, "signal_message_deserialize -> %d\n", r);
-	if (r)
-		goto done;
-
-	r = session_cipher_decrypt_signal_message(cipher, msg, NULL, plaintext);
-	LOG_(!r ? KSC_LOG_DEBUG :
-	     r == SG_ERR_DUPLICATE_MESSAGE ? KSC_LOG_WARN : KSC_LOG_ERROR,
-	     "session_cipher_decrypt_signal_message -> %d\n", r);
-done:
-	SIGNAL_UNREF(msg);
-	return r;
-}
-
-static int received_pkbundle(signal_buffer **plaintext, uint8_t *content,
-                             size_t size, struct ksc_ws *ksc,
-                             session_cipher *cipher)
-{
-	pre_key_signal_message *msg;
-	int r;
-	r = pre_key_signal_message_deserialize(&msg, content, size, ksc->ctx);
-	LOGr(r, "pre_key_signal_message_deserialize -> %d\n", r);
-	if (r)
-		goto done;
-
-	r = session_cipher_decrypt_pre_key_signal_message(cipher, msg, NULL,
-	                                                  plaintext);
-	LOG_(!r ? KSC_LOG_DEBUG :
-	     r == SG_ERR_DUPLICATE_MESSAGE ? KSC_LOG_WARN : KSC_LOG_ERROR,
-	     "session_cipher_decrypt_pre_key_signal_message -> %d\n", r);
-done:
-	SIGNAL_UNREF(msg);
-	return r;
-}
-
-static bool received_envelope(ws_s *ws, const Signalservice__Envelope *e,
-                              struct ksc_ws *ksc)
-{
-	typedef int received_envelope_handler(signal_buffer **plaintext,
-	                                      uint8_t *content, size_t size,
-	                                      struct ksc_ws *ksc,
-	                                      session_cipher *cipher);
-
-	static received_envelope_handler *const handlers[] = {
-		[CIPHERTEXT   ] = received_ciphertext,
-		[PREKEY_BUNDLE] = received_pkbundle,
-	};
-
-	received_envelope_handler *handler;
-	if (e->type >= ARRAY_SIZE(handlers) || !(handler = handlers[e->type])) {
-		LOG(ERROR, "cannot handle envelope type %d!\n", e->type);
-		return false;
-	}
-
 	signal_protocol_address addr = {
 		.name = e->source,
 		.name_len = strlen(e->source),
 		.device_id = e->sourcedevice,
 	};
 
+	signal_buffer *plaintext = NULL;
 	session_cipher *cipher;
 	int r = session_cipher_create(&cipher, ksc->psctx, &addr, ksc->ctx);
 	LOGr(r, "session_cipher_create -> %d\n", r);
 	if (r)
 		return r;
 
-	signal_buffer *plaintext = NULL;
-	r = handler(&plaintext, e->content.data, e->content.len, ksc, cipher);
+	if (e->type == CIPHERTEXT) {
+		signal_message *msg;
+		r = signal_message_deserialize(&msg, e->content.data, e->content.len, ksc->ctx);
+		LOGr(r, "signal_message_deserialize -> %d\n", r);
+		if (!r) {
+			r = session_cipher_decrypt_signal_message(cipher, msg, NULL, &plaintext);
+			LOG_(!r ? KSC_LOG_DEBUG :
+			     r == SG_ERR_DUPLICATE_MESSAGE ? KSC_LOG_WARN : KSC_LOG_ERROR,
+			     "session_cipher_decrypt_signal_message -> %d\n", r);
+		}
+		SIGNAL_UNREF(msg);
+	} else {
+		assert(e->type == PREKEY_BUNDLE);
+		pre_key_signal_message *msg;
+		r = pre_key_signal_message_deserialize(&msg, e->content.data, e->content.len, ksc->ctx);
+		LOGr(r, "pre_key_signal_message_deserialize -> %d\n", r);
+		if (!r) {
+			r = session_cipher_decrypt_pre_key_signal_message(cipher, msg, NULL, &plaintext);
+			LOG_(!r ? KSC_LOG_DEBUG :
+			     r == SG_ERR_DUPLICATE_MESSAGE ? KSC_LOG_WARN : KSC_LOG_ERROR,
+			     "session_cipher_decrypt_pre_key_signal_message -> %d\n", r);
+		}
+		SIGNAL_UNREF(msg);
+	}
 
 	session_cipher_free(cipher);
 
@@ -262,7 +231,47 @@ static bool received_envelope(ws_s *ws, const Signalservice__Envelope *e,
 		    ? 0 : SG_ERR_UNKNOWN;
 
 	signal_buffer_free(plaintext);
-	return r == 0;
+
+	return r;
+}
+
+static int received_receipt(ws_s *ws, const Signalservice__Envelope *e,
+                            struct ksc_ws *ksc)
+{
+	char buf[32];
+	time_t t = e->timestamp / 1000;
+	ctime_r(&t, buf);
+	LOG(NOTE, "got receipt from %s.%u at %s", e->source, e->sourcedevice, buf);
+	if (ksc->args.on_receipt)
+		return ksc->args.on_receipt(ws, ksc, e);
+	return 0;
+}
+
+static bool received_envelope(ws_s *ws, const Signalservice__Envelope *e,
+                              struct ksc_ws *ksc)
+{
+	typedef int received_envelope_handler(ws_s *ws,
+	                                      const Signalservice__Envelope *e,
+                                              struct ksc_ws *ksc);
+
+	static received_envelope_handler *const handlers[] = {
+		[CIPHERTEXT   ] = received_ciphertext_or_prekey_bundle,
+		[PREKEY_BUNDLE] = received_ciphertext_or_prekey_bundle,
+		[RECEIPT      ] = received_receipt,
+	};
+
+	if (!e->has_type) {
+		LOG(ERROR, "cannot handle envelope without type\n");
+		return false;
+	}
+
+	received_envelope_handler *handler;
+	if (e->type >= ARRAY_SIZE(handlers) || !(handler = handlers[e->type])) {
+		LOG(ERROR, "cannot handle envelope type %d!\n", e->type);
+		return false;
+	}
+
+	return handler(ws, e, ksc) == 0;
 }
 
 static bool is_request_signal_key_encrypted(size_t n_headers,
@@ -327,6 +336,239 @@ static int handle_request(ws_s *ws, char *verb, char *path, uint64_t *id,
 	}
 	return r;
 	(void)id;
+}
+
+struct send_message_data {
+	const struct ksc_ws *ksc;
+	/* 0: to unsubscribe, other to stay subscribed */
+	int (*on_response)(ws_s *ws, struct ksc_signal_response *response,
+	                   void *udata);
+	void *udata;
+};
+
+/* 0: to unsubscribe, other to stay subscribed */
+static int on_send_message_response(ws_s *ws,
+                                    struct ksc_signal_response *response,
+                                    void *udata)
+{
+	struct send_message_data *data = udata;
+	const struct ksc_ws *ksc = data->ksc;
+	LOG(DEBUG, "message send response: %u %s\n",
+	    response->status, response->message);
+	int r = 0;
+	if (data->on_response)
+		r = data->on_response(ws, response, data->udata);
+	free(data);
+	return r;
+}
+
+struct outgoing_push_message {
+	struct outgoing_push_message *next;
+	size_t content_sz;
+	int type;
+	int destination_device_id;
+	uint32_t destination_registration_id;
+	/* base64-encoded encrypted (un)padded protobuf-encoded Content message */
+	char content[];
+};
+
+static int encrypt_for(const signal_protocol_address *addr,
+                       const struct ksc_ws *ksc,
+                       const uint8_t *padded_content, size_t padded_content_sz,
+                       struct outgoing_push_message **result)
+{
+	if (!signal_protocol_session_contains_session(ksc->psctx, addr)) {
+		/* TODO: get pre-keys via PushServiceSocket */
+		return -1;
+	}
+
+	session_cipher *cipher = NULL;
+	ciphertext_message *message = NULL;
+	int r;
+
+	r = session_cipher_create(&cipher, ksc->psctx, addr, ksc->ctx);
+	LOGr(r, "session_cipher_create -> %d\n", r);
+	if (r)
+		goto done;
+	r = session_cipher_encrypt(cipher, padded_content, padded_content_sz,
+	                           &message);
+	LOGr(r, "session_cipher_encrypt -> %d\n", r);
+	if (r)
+		goto done;
+
+	signal_buffer *serialized = ciphertext_message_get_serialized(message);
+	LOGr(!serialized, "ciphertext_message_get_serialized -> %p\n",
+	     (void *)serialized);
+
+	size_t serialized_sz = signal_buffer_len(serialized);
+	size_t n = serialized_sz * 4 / 3 + 4;
+	struct outgoing_push_message *msg;
+	msg = ksc_malloc(offsetof(struct outgoing_push_message, content) + n);
+	if (!msg) {
+		r = SG_ERR_NOMEM;
+		goto done;
+	}
+	msg->next = NULL;
+	switch (ciphertext_message_get_type(message)) {
+	case CIPHERTEXT_SIGNAL_TYPE: msg->type = CIPHERTEXT; break;
+	case CIPHERTEXT_PREKEY_TYPE: msg->type = PREKEY_BUNDLE; break;
+	default:
+		r = SG_ERR_UNKNOWN;
+		goto done;
+	}
+	r = session_cipher_get_remote_registration_id(cipher,
+	                                              &msg->destination_registration_id);
+	LOGr(r, "session_cipher_get_remote_registration_id -> %d\n", r);
+	msg->destination_device_id = addr->device_id;
+	msg->content_sz = ksc_base64_encode(msg->content,
+	                                    signal_buffer_data(serialized),
+	                                    serialized_sz);
+
+done:
+	SIGNAL_UNREF(message);
+	session_cipher_free(cipher);
+
+	if (!r)
+		*result = msg;
+	else
+		free(msg);
+	return r;
+
+}
+
+#define DEFAULT_DEVICE_ID	1
+
+#define CSTR2FIOBJ(const_str)	fiobj_str_new(const_str, sizeof(const_str)-1)
+
+/* not exported by libsignal-protocol-c :/ */
+void signal_lock(signal_context *context);
+void signal_unlock(signal_context *context);
+
+#define PADDING			160
+
+int (ksc_ws_send_message)(ws_s *ws, const struct ksc_ws *ksc,
+                          const struct ksc_send_message_target *target,
+                          struct ksc_ws_send_message_args args)
+{
+	Signalservice__DataMessage data = SIGNALSERVICE__DATA_MESSAGE__INIT;
+
+	data.body = (char *)args.body;
+	struct timeval tv;
+	gettimeofday(&tv, NULL);
+	data.timestamp = tv.tv_sec * 1000 + tv.tv_usec / 1000;
+	data.has_timestamp = true;
+
+	Signalservice__Content content = SIGNALSERVICE__CONTENT__INIT;
+	content.datamessage = &data;
+
+	size_t content_sz = signalservice__content__get_packed_size(&content);
+	uint8_t *content_packed = ksc_malloc(ksc_one_and_zeroes_padded_size(content_sz, PADDING));
+	signalservice__content__pack(&content, content_packed);
+
+	ksc_one_and_zeroes_pad(content_packed, &content_sz, PADDING);
+
+	struct outgoing_push_message *message_list = NULL, **message_tail = &message_list;
+
+	signal_lock(ksc->ctx);
+	bool myself = !strcmp(json_store_get_username(ksc->js), target->name);
+	int32_t my_device_id;
+	if (!json_store_get_device_id(ksc->js, &my_device_id))
+		my_device_id = DEFAULT_DEVICE_ID;
+	int r = 0;
+	size_t target_name_len = strlen(target->name);
+	if (!myself || my_device_id != DEFAULT_DEVICE_ID /* || unidentifiedAccess */) {
+		/* encrypt for (target->name, DEFAULT_DEVICE_ID) */
+		r = encrypt_for(&(struct signal_protocol_address){
+			.name = target->name,
+			.name_len = target_name_len,
+			.device_id = DEFAULT_DEVICE_ID,
+		}, ksc, content_packed, content_sz, message_tail);
+		LOGr(r, "encrypt_for default device -> %d\n", r);
+		message_tail = &(*message_tail)->next;
+	}
+	signal_int_list *sessions = NULL;
+	r = signal_protocol_session_get_sub_device_sessions(ksc->psctx,
+	                                                    &sessions,
+	                                                    target->name,
+	                                                    target_name_len);
+	LOGr(r < 0, "signal_protocol_session_get_sub_device_sessions -> %d\n", r);
+	for (unsigned i=0; i<signal_int_list_size(sessions); i++) {
+		int device_id = signal_int_list_at(sessions, i);
+		struct signal_protocol_address addr = {
+			.name = target->name,
+			.name_len = target_name_len,
+			.device_id = device_id,
+		};
+		if ((!myself || device_id != my_device_id) &&
+		    signal_protocol_session_contains_session(ksc->psctx, &addr)) {
+			r = encrypt_for(&addr, ksc, content_packed, content_sz,
+			                message_tail);
+			LOGr(r, "encrypt_for device %d -> %d\n", device_id, r);
+			message_tail = &(*message_tail)->next;
+		}
+	}
+	signal_int_list_free(sessions);
+	signal_unlock(ksc->ctx);
+
+	LOGr(!message_list, "message_list: %p\n", message_list);
+
+	free(content_packed);
+
+	/* deliver(serialized) */
+
+	char *path = ksc_ckprintf("/v1/messages/%s", target->name);
+
+	FIOBJ msg = fiobj_hash_new();
+	fiobj_hash_set(msg, CSTR2FIOBJ("destination"), fiobj_str_new(target->name, target_name_len));
+	fiobj_hash_set(msg, CSTR2FIOBJ("timestamp"), fiobj_num_new(data.timestamp));
+	fiobj_hash_set(msg, CSTR2FIOBJ("online"), fiobj_false());
+	FIOBJ msgs = fiobj_ary_new();
+	for (struct outgoing_push_message *m, *mn = message_list; (m = mn);) {
+		mn = m->next;
+		FIOBJ f = fiobj_hash_new();
+		fiobj_hash_set(f, CSTR2FIOBJ("type"), fiobj_num_new(m->type));
+		fiobj_hash_set(f, CSTR2FIOBJ("destinationDeviceId"),
+		                  fiobj_num_new(m->destination_device_id));
+		fiobj_hash_set(f, CSTR2FIOBJ("destinationRegistrationId"),
+		                  fiobj_num_new(m->destination_registration_id));
+		fiobj_hash_set(f, CSTR2FIOBJ("content"),
+		                  fiobj_str_new(m->content, m->content_sz));
+		fiobj_ary_push(msgs, f);
+		free(m);
+	}
+	message_list = NULL, message_tail = &message_list;
+	fiobj_hash_set(msg, CSTR2FIOBJ("messages"), msgs);
+	FIOBJ json = fiobj_obj2json(msg, 0);
+	fio_str_info_s json_c = fiobj_obj2cstr(json);
+
+	LOG(DEBUG, "sending JSON: %.*s\n", (int)json_c.len, json_c.data);
+
+	struct send_message_data cb_data = {
+		.ksc = ksc,
+		.on_response = args.on_response,
+		.udata = args.udata,
+	};
+
+	static char *headers[] = {
+		"Content-Type: application/json"
+	};
+	r = ksc_ws_send_request(ws, "PUT", path,
+	                        .size = json_c.len,
+	                        .body = json_c.data,
+	                        .headers = headers,
+	                        .n_headers = ARRAY_SIZE(headers),
+	                        .on_response = on_send_message_response,
+	                        .udata = memdup(&cb_data, sizeof(cb_data)));
+
+	fiobj_free(json);
+	fiobj_free(msg);
+	free(path);
+
+	LOGr(r, "ksc_ws_send_request -> %d\n", r);
+
+	/* TODO: directly encode into FIOBJ w/o going via struct outgoing_push_message */
+
+	return r;
 }
 
 static void ksignal_ctx_destroy(struct ksc_ws *ksc)

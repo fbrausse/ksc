@@ -93,6 +93,7 @@ static void print_data_message(int fd, Signalservice__DataMessage *e)
 
 struct ksc_ctx {
 	struct ksc_log log;
+	const char *message;
 };
 
 static void on_close_do_stop(intptr_t uuid, void *udata)
@@ -222,6 +223,15 @@ static void send_get_profile(ws_s *s, const struct ksc_ws *kws)
 	ksc_ws_send_request(s, "GET", "/v1/messages/",
 	                    .on_response = recv_messages,
 	                    .udata = ksc);
+#elif 1
+	struct ksc_send_message_target target = {
+		.name = DEFAULT_GET_PROFILE_NUMBER,
+	};
+	if (ksc->message) {
+		int r = ksc_ws_send_message(s, kws, &target,
+		                            .body = ksc->message);
+		LOG(DEBUG, "send -> %d\n", r);
+	}
 #else
 	(void)ksc;
 	(void)s;
@@ -319,13 +329,15 @@ int main(int argc, char **argv)
 	const char *cli_path = DEFAULT_CLI_CONFIG;
 	const char *cert_path = KSIGNAL_SERVER_CERT;
 	bool force = false;
-	for (int opt; (opt = getopt(argc, argv, ":c:fhp:v:")) != -1;)
+	const char *message = NULL;
+	for (int opt; (opt = getopt(argc, argv, ":c:fhm:p:v:")) != -1;)
 		switch (opt) {
 		case 'c': cert_path = optarg; break;
 		case 'f': force = true; break;
 		case 'h':
-			fprintf(stderr, "usage: %s [-c CERT_PATH] [-f] [-p CLI_CONFIG_PATH] [-v ARG]\n", argv[0]);
+			fprintf(stderr, "usage: %s [-c CERT_PATH] [-f] [-m MESSAGE] [-p CLI_CONFIG_PATH] [-v ARG]\n", argv[0]);
 			exit(0);
+		case 'm': message = optarg; break;
 		case 'p': cli_path = optarg; break;
 		case 'v':
 			if (!parse_v(optarg, &log))
@@ -355,6 +367,7 @@ int main(int argc, char **argv)
 
 	struct ksc_ctx ctx = {
 		.log = log,
+		.message = message,
 	};
 	struct json_store *js = NULL;
 	js = json_store_create(cli_path, &ctx.log);

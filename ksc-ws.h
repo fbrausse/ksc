@@ -21,7 +21,41 @@ struct ksc_ws;
 intptr_t ksc_ws_get_uuid(const struct ksc_ws *kws);
 void * ksc_ws_get_udata(const struct ksc_ws *kws);
 
+struct ksc_ws_send_message_args {
+	const char *body;
+	/*
+	bool end_session;*/
+	/*
+	const void *const *attachments;
+	size_t n_attachments;*/
+
+	/* 0: to unsubscribe, other to stay subscribed */
+	int (*on_response)(ws_s *ws, struct ksc_signal_response *response,
+	                   void *udata);
+	void *udata;
+};
+
+struct ksc_send_message_target {
+	// bool is_group;
+	union {
+		const char *name;/*
+		struct {
+			const void *group_id;
+			size_t group_id_size;
+		};*/
+	};
+};
+
+int ksc_ws_send_message(ws_s *ws, const struct ksc_ws *kws,
+                        const struct ksc_send_message_target *target,
+                        struct ksc_ws_send_message_args args);
+#define ksc_ws_send_message(ws, kws, target, ...) \
+	ksc_ws_send_message(ws, kws, target, \
+	                    (struct ksc_ws_send_message_args){ __VA_ARGS__ });
+
 struct ksc_ws_connect_service_args {
+	bool (*on_receipt)(ws_s *, const struct ksc_ws *,
+	                   const Signalservice__Envelope *e);
 	bool (*on_content)(ws_s *, const struct ksc_ws *,
 	                   const Signalservice__Envelope *e,
 	                   const Signalservice__Content *c);

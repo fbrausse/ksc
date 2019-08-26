@@ -92,6 +92,73 @@ static const EVP_CIPHER * choose_aes_cipher(int cipher, size_t key_len)
 	return NULL;
 }
 
+static int encrypt_func(signal_buffer **output, int cipher,
+                        const uint8_t *key, size_t key_len,
+                        const uint8_t *iv, size_t iv_len,
+                        const uint8_t *ciphertext, size_t ciphertext_len,
+                        void *user_data)
+{
+	int ret_val = SG_SUCCESS;
+	EVP_CIPHER_CTX *cipher_ctx = NULL;
+	uint8_t *out_buf = NULL;
+	int out_len = 0;
+	int final_len = 0;
+	const EVP_CIPHER *evp_cipher = choose_aes_cipher(cipher, key_len);
+
+	if (iv_len != 16)
+		return SG_ERR_UNKNOWN;
+
+	// pick correct cipher function according to mode and key length
+	if (!evp_cipher)
+		return SG_ERR_UNKNOWN;
+
+	// init context
+	cipher_ctx = EVP_CIPHER_CTX_new();
+
+	// init cipher
+	if (!EVP_EncryptInit_ex(cipher_ctx, evp_cipher, NULL, key, iv)) {
+		ret_val = SG_ERR_UNKNOWN;
+		goto cleanup;
+	}
+
+	if (cipher == SG_CIPHER_AES_CTR_NOPADDING)
+		EVP_CIPHER_CTX_set_padding(cipher_ctx, 0);
+
+	// allocate result buffer
+	out_buf = ksc_malloc(sizeof(uint8_t) *
+	                     (ciphertext_len + EVP_MAX_BLOCK_LENGTH));
+	if (!out_buf) {
+		ret_val = SG_ERR_NOMEM;
+		goto cleanup;
+	}
+
+	// update cipher with plaintext etc
+	if (!EVP_EncryptUpdate(cipher_ctx, out_buf, &out_len, ciphertext,
+	                       ciphertext_len)) {
+		ret_val = SG_ERR_UNKNOWN;
+		goto cleanup;
+	}
+
+	// finalise
+	if (!EVP_EncryptFinal_ex(cipher_ctx, out_buf + out_len, &final_len)) {
+		ret_val = SG_ERR_UNKNOWN;
+		goto cleanup;
+	}
+
+	*output = signal_buffer_create(out_buf, out_len + final_len);
+	if (!*output) {
+		ret_val = SG_ERR_NOMEM;
+		goto cleanup;
+	}
+
+cleanup:
+	EVP_CIPHER_CTX_free(cipher_ctx);
+	free(out_buf);
+
+	return ret_val;
+	(void)user_data;
+}
+
 static int decrypt_func(signal_buffer **output, int cipher,
                         const uint8_t *key, size_t key_len,
                         const uint8_t *iv, size_t iv_len,
@@ -165,5 +232,6 @@ signal_crypto_provider ksc_crypto_provider = {
 	.hmac_sha256_update_func  = hmac_sha256_update_func,
 	.hmac_sha256_final_func   = hmac_sha256_final_func,
 	.hmac_sha256_cleanup_func = hmac_sha256_cleanup_func,
+	.encrypt_func             = encrypt_func,
 	.decrypt_func             = decrypt_func,
 };

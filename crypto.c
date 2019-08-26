@@ -161,6 +161,15 @@ bool ksc_pkcs5_unpad(const uint8_t *restrict body, size_t *restrict size)
 	return true;
 }
 
+void ksc_one_and_zeroes_pad(uint8_t *restrict body, size_t *restrict size,
+                            size_t multiple)
+{
+	size_t sz = ksc_one_and_zeroes_padded_size(*size, multiple);
+	body[(*size)++] = 0x80;
+	memset(body + *size, 0, sz - *size);
+	*size = sz;
+}
+
 bool ksc_one_and_zeroes_unpad(const uint8_t *restrict body,
                               size_t *restrict size)
 {
