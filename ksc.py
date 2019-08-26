@@ -51,7 +51,8 @@ class ksc_ffi:
 			                         c_void_p)),
 		}.items():
 			k2 = 'ksc_ffi_' + k
-			(getattr(self._ksc, k2).restype, getattr(self._ksc, k2).argtypes) = v
+			(getattr(self._ksc, k2).restype,
+			 getattr(self._ksc, k2).argtypes) = v
 			setattr(self, k, getattr(self._ksc, k2))
 
 class ksc:
@@ -69,14 +70,18 @@ class ksc:
 		return self._ffi.log_restrict_context(log, desc.encode(),
 		                                      level.encode())
 
+	@staticmethod
+	def _zero(obj):
+		return 0 if obj is None else obj
+
 	def start(self, json_store_path, server_cert_path, log = None,
 	          on_receipt = None, on_data = None, on_open = None,
 	          on_close = None, on_close_do_reconnect = False, data = None):
 		return self._ffi.start(json_store_path.encode(),
-		                       self._ffi.start.argtypes[1](0 if on_receipt is None else on_receipt),
-		                       self._ffi.start.argtypes[2](0 if on_data is None else on_data),
-		                       self._ffi.start.argtypes[3](0 if on_open is None else on_open),
-		                       self._ffi.start.argtypes[4](0 if on_close is None else on_close),
+		                       self._ffi.start.argtypes[1](ksc._zero(on_receipt)),
+		                       self._ffi.start.argtypes[2](ksc._zero(on_data)),
+		                       self._ffi.start.argtypes[3](ksc._zero(on_open)),
+		                       self._ffi.start.argtypes[4](ksc._zero(on_close)),
 		                       log,
 		                       server_cert_path.encode(),
 		                       on_close_do_reconnect, data)

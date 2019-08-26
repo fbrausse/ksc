@@ -211,7 +211,7 @@ static void _on_ws_request(ws_s *s,
 		for (size_t i=0; i<request->n_headers; i++)
 			dprintf(fd, "  header: %s\n", request->headers[i]);
 		if (request->has_body)
-			dprintf(fd, "  body size: %lu\n", request->body.len);
+			dprintf(fd, "  body size: %zu\n", request->body.len);
 	}
 	int r = 0;
 	if (h && h->handle_request)
@@ -245,7 +245,7 @@ static void _on_ws_response(ws_s *s,
 		for (size_t i=0; i<response->n_headers; i++)
 			dprintf(fd, "%s\n", response->headers[i]);
 		if (response->has_body)
-			dprintf(fd, "  body size: %lu\n", response->body.len);
+			dprintf(fd, "  body size: %zu\n", response->body.len);
 	}
 	if (response->has_id) {
 		/* TODO: inefficient repacking of unpacked protobuf */

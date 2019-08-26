@@ -57,7 +57,7 @@ libksc.so test: override LDFLAGS := \
 	$(CLDFLAGS) \
 	$(LDFLAGS) \
 
-libksc.so: override LDFLAGS += -shared -dynamiclib
+libksc.so: override LDFLAGS += -shared
 
 libksc.so test: override LDLIBS += $(shell $(PKG_CONFIG) --libs-only-l $(PKGS))
 
@@ -119,6 +119,8 @@ $(LIB_OBJS): pic/%.o: %.c Makefile protos
 	mkdir -p $@
 
 clean:
-	$(RM) $(OBJS) $(OBJS:.o=.d) test protos $(PROTO_FILES:.proto=.pb-c.c) $(PROTO_FILES:.proto=.pb-c.h)
+	$(RM) $(OBJS) $(OBJS:.o=.d) $(LIB_OBJS) $(LIB_OBJS:.o=.d) \
+		test libksc.so protos \
+		$(PROTO_FILES:.proto=.pb-c.c) $(PROTO_FILES:.proto=.pb-c.h)
 
 -include $(OBJS:.o=.d)
