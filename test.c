@@ -223,7 +223,7 @@ static void send_get_profile(ws_s *s, const struct ksc_ws *kws)
 	ksc_ws_send_request(s, "GET", "/v1/messages/",
 	                    .on_response = recv_messages,
 	                    .udata = ksc);
-#elif 1
+#elif defined(DEFAULT_GET_PROFILE_NUMBER)
 	struct ksc_send_message_target target = {
 		.name = DEFAULT_GET_PROFILE_NUMBER,
 	};

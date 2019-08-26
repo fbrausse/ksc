@@ -384,6 +384,7 @@ static int encrypt_for(const signal_protocol_address *addr,
 
 	session_cipher *cipher = NULL;
 	ciphertext_message *message = NULL;
+	struct outgoing_push_message *msg = NULL;
 	int r;
 
 	r = session_cipher_create(&cipher, ksc->psctx, addr, ksc->ctx);
@@ -400,9 +401,10 @@ static int encrypt_for(const signal_protocol_address *addr,
 	LOGr(!serialized, "ciphertext_message_get_serialized -> %p\n",
 	     (void *)serialized);
 
+	/* deliver(serialized) */
+
 	size_t serialized_sz = signal_buffer_len(serialized);
 	size_t n = serialized_sz * 4 / 3 + 4;
-	struct outgoing_push_message *msg;
 	msg = ksc_malloc(offsetof(struct outgoing_push_message, content) + n);
 	if (!msg) {
 		r = SG_ERR_NOMEM;
@@ -513,8 +515,6 @@ int (ksc_ws_send_message)(ws_s *ws, const struct ksc_ws *ksc,
 	LOGr(!message_list, "message_list: %p\n", message_list);
 
 	free(content_packed);
-
-	/* deliver(serialized) */
 
 	char *path = ksc_ckprintf("/v1/messages/%s", target->name);
 
