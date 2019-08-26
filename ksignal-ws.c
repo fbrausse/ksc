@@ -417,7 +417,7 @@ intptr_t (ksc_ws_connect_raw)(const char *url, struct ksc_ws_connect_raw_args h)
 		.on_ready    = _signal_ws_on_ready,
 		.on_shutdown = _signal_ws_on_shutdown,
 		.on_close    = _signal_ws_on_close,
-		.udata       = memdup(&h, sizeof(h)),
+		.udata       = ksc_memdup(&h, sizeof(h)),
 	};
 	fio_tls_s *tls = signal_tls(h.server_cert_path);
 	intptr_t r = http_connect(url, NULL,

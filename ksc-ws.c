@@ -222,7 +222,7 @@ static int received_ciphertext_or_prekey_bundle(ws_s *ws,
 
 	if (!r || r == SG_ERR_DUPLICATE_MESSAGE) {
 		struct delete_request_args args = { ws, ksc };
-		fio_defer(delete_request, memdup(&args, sizeof(args)),
+		fio_defer(delete_request, ksc_memdup(&args, sizeof(args)),
 		          ack_message_path(e));
 	}
 	if (!r && plaintext)
@@ -558,7 +558,7 @@ int (ksc_ws_send_message)(ws_s *ws, const struct ksc_ws *ksc,
 	                        .headers = headers,
 	                        .n_headers = ARRAY_SIZE(headers),
 	                        .on_response = on_send_message_response,
-	                        .udata = memdup(&cb_data, sizeof(cb_data)));
+	                        .udata = ksc_memdup(&cb_data, sizeof(cb_data)));
 
 	fiobj_free(json);
 	fiobj_free(msg);

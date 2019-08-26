@@ -123,7 +123,7 @@ static void kjson_value_strdup(struct kjson_value *v)
 	case KJSON_VALUE_NUMBER_DOUBLE:
 		break;
 	case KJSON_VALUE_STRING:
-		v->s.begin = memdup(v->s.begin, v->s.len + 1);
+		v->s.begin = ksc_memdup(v->s.begin, v->s.len + 1);
 		break;
 	case KJSON_VALUE_ARRAY:
 		for (size_t i=0; i<v->a.n; i++)
@@ -131,7 +131,7 @@ static void kjson_value_strdup(struct kjson_value *v)
 		break;
 	case KJSON_VALUE_OBJECT:
 		for (size_t i=0; i<v->o.n; i++) {
-			v->o.data[i].key.begin = memdup(v->o.data[i].key.begin,
+			v->o.data[i].key.begin = ksc_memdup(v->o.data[i].key.begin,
 			                                v->o.data[i].key.len+1);
 			kjson_value_strdup(&v->o.data[i].value);
 		}
@@ -472,7 +472,7 @@ static int sess_get_sub_device_sessions_func(signal_int_list **sessions,
 static struct kjson_array array_copy_shallow(struct kjson_array *a)
 {
 	return (struct kjson_array){
-		.data = memdup(&a->data, sizeof(*a->data) * a->n),
+		.data = ksc_memdup(&a->data, sizeof(*a->data) * a->n),
 		.n = a->n,
 	};
 }
@@ -1088,7 +1088,7 @@ static int idk_save_identity(const signal_protocol_address *address,
 		} else {
 			/* insert idk into e */
 			idk = &kjson_object_push_back(&e->o,
-				.key = { memdup("identityKey", 12), 11 },
+				.key = { ksc_memdup("identityKey", 12), 11 },
 				.value = {
 					.type = KJSON_VALUE_STRING,
 					.s = record_str,

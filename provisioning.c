@@ -56,7 +56,7 @@ intptr_t (ksc_defer_get_new_uuid)(const char *base_url,
 		.on_ready = NULL, /* TODO: reply to request */
 		.on_shutdown = NULL, /* nothing to do */
 		.on_close = on_close, /* TODO: signal this method to return? */
-		.udata = memdup(&ps, sizeof(ps)),
+		.udata = ksc_memdup(&ps, sizeof(ps)),
 	);
 	free(url);
 	return r;
