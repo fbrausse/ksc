@@ -53,6 +53,23 @@ Connections to text-secure.whispersystems.org
 --------------------------
 - sent by the server when it has no more messages waiting.
 
+<- PUT /v1/message/NUMBER
+-------------------------
+- header: Content-Type: application/json
+- body is a JSON object (see OutgoingPushMessage.java in libsignal-service-java
+  for reference) with the following fields:
+  - `String destination`: NUMBER
+  - `long timestamp`: milli-seconds since the epoch
+  - `messages`: array of JSON objects (see OutgoingPushMessage.java for
+    reference):
+    - `int type`
+    - `int destinationDeviceId`
+    - `int destinationRegistrationId`
+    - `String content` holds the base64-encoded ciphertext resulting from
+      encrypting an unpadded protobuf-encoded Content message with the
+      session-cipher for the the (name,deviceId) tuple.
+  - `boolean online`
+
 <- GET /v1/messages/
 --------------------
 - response is JSON-encoded.
