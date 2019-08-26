@@ -10,3 +10,5 @@
 /protos
 /default.mk
 /+*
+/LocalStorageProtocol.pb-c.c
+/LocalStorageProtocol.pb-c.h
