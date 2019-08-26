@@ -148,19 +148,19 @@ static void json_value_fini(struct kjson_value *v)
 	case KJSON_VALUE_NUMBER_DOUBLE:
 		break;
 	case KJSON_VALUE_STRING:
-		free(v->s.begin);
+		ksc_free(v->s.begin);
 		break;
 	case KJSON_VALUE_ARRAY:
 		for (size_t i=0; i<v->a.n; i++)
 			json_value_fini(&v->a.data[i]);
-		free(v->a.data);
+		ksc_free(v->a.data);
 		break;
 	case KJSON_VALUE_OBJECT:
 		for (size_t i=0; i<v->o.n; i++) {
-			free(v->o.data[i].key.begin);
+			ksc_free(v->o.data[i].key.begin);
 			json_value_fini(&v->o.data[i].value);
 		}
-		free(v->o.data);
+		ksc_free(v->o.data);
 		break;
 	}
 }
@@ -254,16 +254,16 @@ bool json_store_load(struct json_store *js)
 			r = json_store_save(js) < 0 ? false : true;
 	}
 	kjson_value_strdup(&js->cfg);
-	free(bf.data);
+	ksc_free(bf.data);
 	return r;
 }
 
 void json_store_destroy(struct json_store *js)
 {
 	json_value_fini(&js->cfg);
-	free(js->path);
+	ksc_free(js->path);
 	close(js->fd); /* also releases lockf(3p) lock */
-	free(js);
+	ksc_free(js);
 }
 
 struct json_store * json_store_create(const char *path, struct ksc_log *log)
@@ -298,7 +298,7 @@ struct json_store * json_store_create(const char *path, struct ksc_log *log)
 	return js;
 
 fail_1:
-	free(js);
+	ksc_free(js);
 fail:
 	close(fd);
 	return NULL;
@@ -331,7 +331,7 @@ int json_store_save(struct json_store *js)
 	if (rename(tmp, js->path) == -1)
 		goto fail_1;
 
-	free(tmp);
+	ksc_free(tmp);
 	close(js->fd);
 	js->fd = tfd;
 #if 1
@@ -346,7 +346,7 @@ fail_2:
 fail_1:
 	close(tfd);
 fail:
-	free(tmp);
+	ksc_free(tmp);
 	return -1;
 }
 
@@ -481,10 +481,10 @@ static int array_handle_store_result(int r, struct kjson_array *tgt,
                                      struct kjson_array shallow_org)
 {
 	if (r < 0) {
-		free(tgt->data);
+		ksc_free(tgt->data);
 		*tgt = shallow_org;
 	} else
-		free(shallow_org.data);
+		ksc_free(shallow_org.data);
 	return r;
 }
 
@@ -547,7 +547,7 @@ static int sess_store_session_func(const signal_protocol_address *address,
 		if (r < 0)
 			s->s = org;
 		else {
-			free(org.begin);
+			ksc_free(org.begin);
 			record_enc = NULL;
 		}
 		goto done;
@@ -578,7 +578,7 @@ static int sess_store_session_func(const signal_protocol_address *address,
 		st->a.n--;
 	}
 done:
-	free(record_enc);
+	ksc_free(record_enc);
 	return r;
 	(void)user_record, (void)user_record_len;
 }
@@ -752,7 +752,7 @@ static int prek_store_pre_key(uint32_t pre_key_id, uint8_t *record,
 	int r = json_store_save(js);
 	if (r < 0)
 		json_value_fini(st->a.data + --st->a.n);
-	free(record_enc);
+	ksc_free(record_enc);
 	return r;
 }
 
@@ -881,7 +881,7 @@ static int sipk_store_signed_pre_key(uint32_t signed_pre_key_id,
 	int r = json_store_save(js);
 	if (r < 0)
 		json_value_fini(st->a.data + --st->a.n);
-	free(record_enc);
+	ksc_free(record_enc);
 	return r;
 }
 

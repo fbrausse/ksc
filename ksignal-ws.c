@@ -77,7 +77,7 @@ static int signal_ws_send(ws_s *s, ProtobufCMessage *request_or_response)
 	si.len = signalservice__web_socket_message__pack(&ws_msg,
 	                                                 (uint8_t *)si.data);
 	int r = websocket_write(s, si, false);
-	free(si.data);
+	ksc_free(si.data);
 	return r;
 }
 
@@ -139,7 +139,7 @@ static void _on_requested_unsubscribe(void *udata1, void *udata2)
 	struct requested_subscription *s = udata2;
 	if (s->on_unsubscribe)
 		s->on_unsubscribe(udata1);
-	free(s);
+	ksc_free(s);
 }
 
 int (ksc_ws_send_request)(ws_s *s, char *verb, char *path,
@@ -360,7 +360,7 @@ static void _signal_ws_on_close(intptr_t uuid, void *udata)
 	LOG(NOTE, "signal ws socket closed\n");
 	if (h && h->on_close)
 		h->on_close(uuid, h->udata);
-	free(h);
+	ksc_free(h);
 }
 
 static void _on_websocket_http_connected(http_s *h) {
@@ -380,7 +380,7 @@ static void _on_websocket_http_connected(http_s *h) {
 #endif
   int r = (http_upgrade2ws)(h, *s);
   LOGL_(r ? KSC_LOG_ERROR : KSC_LOG_DEBUG, hh->log, "http_upgrade2ws: %d\n", r);
-  free(s);
+  ksc_free(s);
 }
 
 static void _on_websocket_http_connection_finished(http_settings_s *settings) {
@@ -390,7 +390,7 @@ static void _on_websocket_http_connection_finished(http_settings_s *settings) {
     LOGL(DEBUG, hh->log, "on_websocket_http_connection_finished\n");
     if (s->on_close)
       s->on_close(0, s->udata);
-    free(s);
+    ksc_free(s);
   } else {
     /*KSC_DEBUG(DEBUG, "on_websocket_http_connection_finished\n")*/;
   }

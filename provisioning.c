@@ -43,7 +43,7 @@ static void on_close(intptr_t uuid, void *udata)
 	struct ksc_defer_get_new_uuid_args *h = udata;
 	if (h && h->on_close)
 		h->on_close(uuid, h->udata);
-	free(h);
+	ksc_free(h);
 }
 
 intptr_t (ksc_defer_get_new_uuid)(const char *base_url,
@@ -58,6 +58,6 @@ intptr_t (ksc_defer_get_new_uuid)(const char *base_url,
 		.on_close = on_close, /* TODO: signal this method to return? */
 		.udata = ksc_memdup(&ps, sizeof(ps)),
 	);
-	free(url);
+	ksc_free(url);
 	return r;
 }

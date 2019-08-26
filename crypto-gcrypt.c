@@ -247,11 +247,11 @@ static int decrypt_func(signal_buffer **output, int cipher,
 		goto fail;
 
 	*output = signal_buffer_create(body, size);
-	free(body);
+	ksc_free(body);
 	return 0;
 
 cipher_fail2:
-	free(body);
+	ksc_free(body);
 cipher_fail:
 	gcry_cipher_close(ci);
 fail:

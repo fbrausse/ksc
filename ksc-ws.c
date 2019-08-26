@@ -165,8 +165,8 @@ static void delete_request(void *udata1, void *udata2)
 	ksc_ws_send_request(args->ws, "DELETE", path,
 	                    .on_response = delete_request_on_response,
 	                    .udata = args->ksc);
-	free(path);
-	free(args);
+	ksc_free(path);
+	ksc_free(args);
 }
 
 static char * ack_message_path(const Signalservice__Envelope *e)
@@ -360,7 +360,7 @@ static int on_send_message_response(ws_s *ws,
 	int r = 0;
 	if (data->on_response)
 		r = data->on_response(ws, response, data->udata);
-	free(data);
+	ksc_free(data);
 	return r;
 }
 
@@ -435,7 +435,7 @@ done:
 	if (!r)
 		*result = msg;
 	else
-		free(msg);
+		ksc_free(msg);
 	return r;
 
 }
@@ -516,7 +516,7 @@ int (ksc_ws_send_message)(ws_s *ws, const struct ksc_ws *ksc,
 
 	LOGr(!message_list, "message_list: %p\n", message_list);
 
-	free(content_packed);
+	ksc_free(content_packed);
 
 	char *path = ksc_ckprintf("/v1/messages/%s", target->name);
 
@@ -536,7 +536,7 @@ int (ksc_ws_send_message)(ws_s *ws, const struct ksc_ws *ksc,
 		fiobj_hash_set(f, CSTR2FIOBJ("content"),
 		                  fiobj_str_new(m->content, m->content_sz));
 		fiobj_ary_push(msgs, f);
-		free(m);
+		ksc_free(m);
 	}
 	message_list = NULL, message_tail = &message_list;
 	fiobj_hash_set(msg, CSTR2FIOBJ("messages"), msgs);
@@ -564,7 +564,7 @@ int (ksc_ws_send_message)(ws_s *ws, const struct ksc_ws *ksc,
 
 	fiobj_free(json);
 	fiobj_free(msg);
-	free(path);
+	ksc_free(path);
 
 	LOGr(r, "ksc_ws_send_request -> %d\n", r);
 
@@ -579,9 +579,9 @@ static void ksignal_ctx_destroy(struct ksc_ws *ksc)
 		signal_protocol_store_context_destroy(ksc->psctx);
 	if (ksc->ctx)
 		signal_context_destroy(ksc->ctx);
-	free(ksc->url);
+	ksc_free(ksc->url);
 	pthread_mutex_destroy(&ksc->signal_mtx);
-	free(ksc);
+	ksc_free(ksc);
 }
 
 static void ctx_log(int level, const char *message, size_t len, void *user_data)

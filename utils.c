@@ -97,7 +97,7 @@ char * ksc_ckprintf(const char *fmt, ...)
 	va_start(ap, fmt);
 	n = vsnprintf(buf, n+1, fmt, ap);
 	va_end(ap);
-	return n == -1 ? free(buf), NULL : buf;
+	return n == -1 ? ksc_free(buf), NULL : buf;
 }
 
 void ksc_dprint_hex(int fd, const uint8_t *buf, size_t size)
@@ -120,7 +120,7 @@ void ksc_log_fini(struct ksc_log *log)
 {
 	for (struct ksc_log__context_lvl *it, *jt = log->context_lvls; (it = jt);) {
 		jt = it->next;
-		free(it);
+		ksc_free(it);
 	}
 }
 

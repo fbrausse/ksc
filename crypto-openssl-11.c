@@ -153,7 +153,7 @@ static int encrypt_func(signal_buffer **output, int cipher,
 
 cleanup:
 	EVP_CIPHER_CTX_free(cipher_ctx);
-	free(out_buf);
+	ksc_free(out_buf);
 
 	return ret_val;
 	(void)user_data;
@@ -220,7 +220,7 @@ static int decrypt_func(signal_buffer **output, int cipher,
 
 cleanup:
 	EVP_CIPHER_CTX_free(cipher_ctx);
-	free(out_buf);
+	ksc_free(out_buf);
 
 	return ret_val;
 	(void)user_data;

@@ -33,7 +33,7 @@ static int hmac_sha256_init_func(void **hmac_context, const uint8_t *key,
 	// set key
 	if (!HMAC_Init_ex(hmac_ctx, key, key_len, EVP_sha256(), NULL)) {
 		HMAC_CTX_cleanup(hmac_ctx);
-		free(hmac_ctx);
+		ksc_free(hmac_ctx);
 		return SG_ERR_UNKNOWN;
 	}
 
@@ -70,7 +70,7 @@ static int hmac_sha256_final_func(void *hmac_context,
 static void hmac_sha256_cleanup_func(void *hmac_context, void *user_data)
 {
 	HMAC_CTX_cleanup(hmac_context);
-	free(hmac_context);
+	ksc_free(hmac_context);
 	(void)user_data;
 }
 
@@ -157,7 +157,7 @@ static int decrypt_func(signal_buffer **output, int cipher,
 
 cleanup:
 	EVP_CIPHER_CTX_free(cipher_ctx);
-	free(out_buf);
+	ksc_free(out_buf);
 
 	return ret_val;
 	(void)user_data;

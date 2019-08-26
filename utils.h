@@ -57,7 +57,15 @@ static inline void * ksc_realloc(void *ptr, size_t n)
 	return realloc(ptr, n);
 }
 
-static inline void * ksc_memdup(void *p, size_t sz) { return memcpy(ksc_malloc(sz), p, sz); }
+static inline void ksc_free(void *ptr)
+{
+	free(ptr);
+}
+
+static inline void * ksc_memdup(void *p, size_t sz)
+{
+	return memcpy(ksc_malloc(sz), p, sz);
+}
 
 #define KJSON_VALUE_INIT { .type = KJSON_VALUE_NULL, }
 

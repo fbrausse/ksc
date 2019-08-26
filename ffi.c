@@ -20,7 +20,7 @@ void ksc_ffi_log_destroy(struct ksc_log *log)
 {
 	if (log)
 		ksc_log_fini(log);
-	free(log);
+	ksc_free(log);
 }
 
 int ksc_ffi_log_restrict_context(struct ksc_log *log, const char *desc,
@@ -144,7 +144,7 @@ static bool ffi_on_content(ws_s *ws, const struct ksc_ws *kws,
 	int r = 0;
 	if (ffi->on_data)
 		r = ffi->on_data(ffi, &fe, &fd);
-	free(fd.group_id_base64);
+	ksc_free(fd.group_id_base64);
 	return r ? false : true;
 	(void)ws;
 }
@@ -162,7 +162,7 @@ static void ffi_destroy(struct ksc_ffi *ffi)
 	ksc_ffi_log_destroy(ffi->log);
 	if (ffi->js)
 		json_store_destroy(ffi->js);
-	free(ffi);
+	ksc_free(ffi);
 }
 
 static void ffi_on_close(intptr_t uuid, void *udata)
@@ -291,6 +291,6 @@ int ksc_ffi_send_message(struct ksc_ffi *ffi,
 	                            .udata = cb_data,
 	);
 	if (r)
-		free(cb_data);
+		ksc_free(cb_data);
 	return r;
 }
