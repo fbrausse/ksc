@@ -131,6 +131,8 @@ struct ksc_log {
 
 #define KSC_DEFAULT_LOG	(struct ksc_log){ INT_MAX, STDERR_FILENO, NULL }
 
+void ksc_log_fini(struct ksc_log *log);
+
 struct ksc_log_context {
 	const char *desc;
 	const char *color;

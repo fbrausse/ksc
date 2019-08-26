@@ -12,3 +12,5 @@
 /+*
 /LocalStorageProtocol.pb-c.c
 /LocalStorageProtocol.pb-c.h
+/libksc.so
+/__pycache__

@@ -116,6 +116,14 @@ static const char *const lvls[] = {
 	[KSC_LOG_DEBUG] = "debug",
 };
 
+void ksc_log_fini(struct ksc_log *log)
+{
+	for (struct ksc_log__context_lvl *it, *jt = log->context_lvls; (it = jt);) {
+		jt = it->next;
+		free(it);
+	}
+}
+
 bool ksc_log_lvl_parse(const char *lvl, enum ksc_log_lvl *res)
 {
 	if (!strcmp(lvl, "none")) {

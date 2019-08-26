@@ -431,10 +431,8 @@ int main(int argc, char **argv)
 	LOGL(DEBUG, &ctx.log, "total alloced: %zu\n", ksc_alloc_total);
 #endif
 
-	for (struct ksc_log__context_lvl *it, *jt = ctx.log.context_lvls; (it = jt);) {
-		jt = it->next;
-		free(it);
-	}
+
+	ksc_log_fini(&ctx.log);
 
 	return 0;
 }

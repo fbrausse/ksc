@@ -51,16 +51,17 @@ override CFLAGS := \
 	$(CLDFLAGS) \
 	$(CFLAGS) \
 
-test: override LDFLAGS := \
+libksc.so test: override LDFLAGS := \
 	$(shell $(PKG_CONFIG) --libs-only-L --libs-only-other $(PKGS)) \
 	$(subst -L,-Xlinker -rpath -Xlinker ,$(shell $(PKG_CONFIG) --libs-only-L $(PKGS))) \
 	$(CLDFLAGS) \
 	$(LDFLAGS) \
 
-test: override LDLIBS += $(shell $(PKG_CONFIG) --libs-only-l $(PKGS))
+libksc.so: override LDFLAGS += -shared -dynamiclib
 
-OBJS = \
-	test.o \
+libksc.so test: override LDLIBS += $(shell $(PKG_CONFIG) --libs-only-l $(PKGS))
+
+COMMON_OBJS = \
 	provisioning.o \
 	ksignal-ws.o \
 	utils.o \
@@ -69,6 +70,15 @@ OBJS = \
 	json-store.o \
 	$(CRYPT_OBJS) \
 	$(PROTO_FILES:.proto=.pb-c.o) \
+
+LIB_OBJS = $(addprefix pic/,\
+	$(COMMON_OBJS) \
+	ffi.o \
+)
+
+OBJS = \
+	test.o \
+	$(COMMON_OBJS) \
 
 SERVICE_PROTO_FILES = \
 	WebSocketResources.proto \
@@ -84,7 +94,10 @@ PROTO_FILES = \
 
 .PHONY: all clean
 
-all: test
+all: test libksc.so
+
+libksc.so: $(LIB_OBJS) | pic/
+	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $^ $(LDLIBS)
 
 test: $(OBJS)
 
@@ -96,6 +109,14 @@ $(PROTO_FILES:.proto=.pb-c.c) $(PROTO_FILES:.proto=.pb-c.h): protos
 
 protos: $(addprefix $(SERVICE_PROTO_PATH)/,$(SERVICE_PROTO_FILES)) $(LOCAL_PROTO_FILES)
 	$(PROTOC_C) --c_out=. --proto_path=$(SERVICE_PROTO_PATH) --proto_path=. $(PROTO_FILES) && touch $@
+
+pic/%.o: override CFLAGS += -fPIC
+
+$(LIB_OBJS): pic/%.o: %.c Makefile protos
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c -o $@ $<
+
+%/:
+	mkdir -p $@
 
 clean:
 	$(RM) $(OBJS) $(OBJS:.o=.d) test protos $(PROTO_FILES:.proto=.pb-c.c) $(PROTO_FILES:.proto=.pb-c.h)

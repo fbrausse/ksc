@@ -242,9 +242,10 @@ static int received_receipt(ws_s *ws, const Signalservice__Envelope *e,
 	time_t t = e->timestamp / 1000;
 	ctime_r(&t, buf);
 	LOG(NOTE, "got receipt from %s.%u at %s", e->source, e->sourcedevice, buf);
+	bool r = true;
 	if (ksc->args.on_receipt)
-		return ksc->args.on_receipt(ws, ksc, e);
-	return 0;
+		r = ksc->args.on_receipt(ws, ksc, e);
+	return r ? 0 : -1;
 }
 
 static bool received_envelope(ws_s *ws, const Signalservice__Envelope *e,
@@ -327,6 +328,7 @@ static int handle_request(ws_s *ws, char *verb, char *path, uint64_t *id,
 			                   ksc_log_prints(KSC_LOG_DEBUG, ksc->args.log, &log_ctx));
 		}
 		r = received_envelope(ws, e, ksc) ? 1 : -3;
+		LOG(DEBUG, "handle_request for PUT /api/v1/message returning %d\n", r);
 		signalservice__envelope__free_unpacked(e, NULL);
 	} else if (!strcmp(verb, "PUT") && !strcmp(path, "/api/v1/queue/empty")) {
 		r = 1;
