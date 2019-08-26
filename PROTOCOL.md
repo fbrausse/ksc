@@ -53,8 +53,8 @@ Connections to text-secure.whispersystems.org
 --------------------------
 - sent by the server when it has no more messages waiting.
 
-<- PUT /v1/message/NUMBER
--------------------------
+<- PUT /v1/messages/NUMBER
+--------------------------
 - header: Content-Type: application/json
 - body is a JSON object (see OutgoingPushMessage.java in libsignal-service-java
   for reference) with the following fields:
