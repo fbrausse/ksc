@@ -206,6 +206,7 @@ static int recv_messages(ws_s *ws, struct ksc_signal_response *r, void *udata)
 static void send_get_profile(ws_s *s, const struct ksc_ws *kws)
 {
 	struct ksc_ctx *ksc = ksc_ws_get_udata(kws);
+	LOG(INFO, "connected\n");
 #if 0 && defined(DEFAULT_GET_PROFILE_NUMBER)
 	// works
 	ksc_ws_send_request(s, "GET",

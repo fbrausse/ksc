@@ -16,6 +16,13 @@ struct ksc_log * ksc_ffi_log_create(int fd, const char *level)
 	return ksc_memdup(&log, sizeof(log));
 }
 
+void ksc_ffi_log_destroy(struct ksc_log *log)
+{
+	if (log)
+		ksc_log_fini(log);
+	free(log);
+}
+
 int ksc_ffi_log_restrict_context(struct ksc_log *log, const char *desc,
                                  const char *level)
 {
@@ -152,9 +159,7 @@ static void ffi_on_open(ws_s *ws, const struct ksc_ws *kws)
 
 static void ffi_destroy(struct ksc_ffi *ffi)
 {
-	if (ffi->log)
-		ksc_log_fini(ffi->log);
-	free(ffi->log);
+	ksc_ffi_log_destroy(ffi->log);
 	if (ffi->js)
 		json_store_destroy(ffi->js);
 	free(ffi);
@@ -202,8 +207,8 @@ struct ksc_ffi * ksc_ffi_start(const char *json_store_path,
 	ffi->js = json_store_create(json_store_path, log);
 	if (!ffi->js)
 		goto error;
-	if (!ffi->log)
-		ffi->log = ksc_memdup(&KSC_DEFAULT_LOG, sizeof(*log));
+	ffi->log = ksc_memdup(ffi->log ? ffi->log : &KSC_DEFAULT_LOG,
+	                      sizeof(*ffi->log));
 	const struct ksc_ws *kws = ksc_ws_connect_service(ffi->js,
 		.on_receipt = ffi_on_receipt,
 		.on_content = ffi_on_content,

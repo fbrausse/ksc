@@ -19,6 +19,7 @@
 struct ksc_log;
 
 struct ksc_log * ksc_ffi_log_create(int fd, const char *level);
+void             ksc_ffi_log_destroy(struct ksc_log *log);
 int              ksc_ffi_log_restrict_context(struct ksc_log *log,
                                               const char *desc,
                                               const char *level);
