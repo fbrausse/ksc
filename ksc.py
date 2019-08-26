@@ -1,3 +1,9 @@
+#  ksc.py
+#
+#  Copyright 2019 Franz Brauße <brausse@informatik.uni-trier.de>
+#
+#  This file is part of ksc.
+#  See the LICENSE file for terms of distribution.
 
 from ctypes import *
 
@@ -91,7 +97,7 @@ class ksc:
 
 	def send_message(self, k, target, body, on_response = None, data = None):
 		return self._ffi.send_message(k, target.encode(), body.encode(),
-		                              self._ffi.send_message.argtypes[3](0 if on_response is None else on_response),
+		                              self._ffi.send_message.argtypes[3](ksc._zero(on_response)),
 		                              data)
 
 """
