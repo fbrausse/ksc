@@ -42,10 +42,11 @@ static bool base64_decode_char(char c, uint32_t *block)
 size_t ksc_base64_decode_size(const char *src, size_t len)
 {
 	int padding = (4 - (len % 4)) % 4;
-	if (!padding)
+	if (!padding) {
 		padding = len >= 2 && src[len-2] == '=' ? 2
 		        : len >= 1 && src[len-1] == '=' ? 1 : 0;
-	len -= padding;
+		len -= padding;
+	}
 	assert((len + padding) % 4 == 0);
 	return 3 * (len + padding) / 4 - padding;
 }
@@ -55,10 +56,11 @@ ssize_t ksc_base64_decode(uint8_t *target, const char *src, size_t len)
 	/* can't use fio_base64_decode() as it seems to be buggy... */
 	uint8_t *tgt = target;
 	int padding = (4 - (len % 4)) % 4;
-	if (!padding)
+	if (!padding) {
 		padding = len >= 2 && src[len-2] == '=' ? 2
 		        : len >= 1 && src[len-1] == '=' ? 1 : 0;
-	len -= padding;
+		len -= padding;
+	}
 	assert((len + padding) % 4 == 0);
 	for (; len >= 4; len -= 4) {
 		uint32_t block = 0;
