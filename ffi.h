@@ -62,7 +62,7 @@ struct ksc_ffi * ksc_ffi_start(const char *json_store_path,
 void ksc_ffi_stop(struct ksc_ffi *);
 
 int ksc_ffi_send_message(struct ksc_ffi *ffi,
-                         const char *target,
+                         const char *recipient,
 	const char *body,
 	/*
 	bool end_session;*/

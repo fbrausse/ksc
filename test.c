@@ -225,11 +225,8 @@ static void send_get_profile(ws_s *s, const struct ksc_ws *kws)
 	                    .on_response = recv_messages,
 	                    .udata = ksc);
 #elif defined(DEFAULT_GET_PROFILE_NUMBER)
-	struct ksc_send_message_target target = {
-		.name = DEFAULT_GET_PROFILE_NUMBER,
-	};
 	if (ksc->message) {
-		int r = ksc_ws_send_message(s, kws, &target,
+		int r = ksc_ws_send_message(s, kws, DEFAULT_GET_PROFILE_NUMBER,
 		                            .body = ksc->message);
 		LOG(DEBUG, "send -> %d\n", r);
 	}

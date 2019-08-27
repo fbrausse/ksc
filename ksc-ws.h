@@ -35,19 +35,7 @@ struct ksc_ws_send_message_args {
 	void *udata;
 };
 
-struct ksc_send_message_target {
-	// bool is_group;
-	union {
-		const char *name;/*
-		struct {
-			const void *group_id;
-			size_t group_id_size;
-		};*/
-	};
-};
-
-int ksc_ws_send_message(ws_s *ws, const struct ksc_ws *kws,
-                        const struct ksc_send_message_target *target,
+int ksc_ws_send_message(ws_s *ws, const struct ksc_ws *kws, const char *recipient,
                         struct ksc_ws_send_message_args args);
 #define ksc_ws_send_message(ws, kws, target, ...) \
 	ksc_ws_send_message(ws, kws, target, \

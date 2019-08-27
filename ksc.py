@@ -51,7 +51,7 @@ class ksc_ffi:
 			                  c_void_p)),
 			'stop': (None, (ksc_p,)),
 			'send_message': (c_int, (ksc_p,
-			                         c_char_p, # target
+			                         c_char_p, # recipient
 			                         c_char_p, # body
 			                         CFUNCTYPE(c_int, c_int, c_char_p, c_void_p), # on_response
 			                         c_void_p)),
@@ -95,8 +95,8 @@ class ksc:
 	def stop(self, k):
 		self._ffi.stop(k)
 
-	def send_message(self, k, target, body, on_response = None, data = None):
-		return self._ffi.send_message(k, target.encode(), body.encode(),
+	def send_message(self, k, recipient, body, on_response = None, data = None):
+		return self._ffi.send_message(k, recipient.encode(), body.encode(),
 		                              self._ffi.send_message.argtypes[3](ksc._zero(on_response)),
 		                              data)
 

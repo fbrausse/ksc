@@ -451,7 +451,7 @@ void signal_unlock(signal_context *context);
 #define PADDING			160
 
 int (ksc_ws_send_message)(ws_s *ws, const struct ksc_ws *ksc,
-                          const struct ksc_send_message_target *target,
+                          const char *recipient,
                           struct ksc_ws_send_message_args args)
 {
 	Signalservice__DataMessage data = SIGNALSERVICE__DATA_MESSAGE__INIT;
@@ -474,17 +474,17 @@ int (ksc_ws_send_message)(ws_s *ws, const struct ksc_ws *ksc,
 	struct outgoing_push_message *message_list = NULL, **message_tail = &message_list;
 
 	signal_lock(ksc->ctx);
-	bool myself = !strcmp(json_store_get_username(ksc->js), target->name);
+	bool myself = !strcmp(json_store_get_username(ksc->js), recipient);
 	int32_t my_device_id;
 	if (!json_store_get_device_id(ksc->js, &my_device_id))
 		my_device_id = DEFAULT_DEVICE_ID;
 	int r = 0;
-	size_t target_name_len = strlen(target->name);
+	size_t recipient_len = strlen(recipient);
 	if (!myself || my_device_id != DEFAULT_DEVICE_ID /* || unidentifiedAccess */) {
 		/* encrypt for (target->name, DEFAULT_DEVICE_ID) */
 		r = encrypt_for(&(struct signal_protocol_address){
-			.name = target->name,
-			.name_len = target_name_len,
+			.name = recipient,
+			.name_len = recipient_len,
 			.device_id = DEFAULT_DEVICE_ID,
 		}, ksc, content_packed, content_sz, message_tail);
 		LOGr(r, "encrypt_for default device -> %d\n", r);
@@ -493,14 +493,14 @@ int (ksc_ws_send_message)(ws_s *ws, const struct ksc_ws *ksc,
 	signal_int_list *sessions = NULL;
 	r = signal_protocol_session_get_sub_device_sessions(ksc->psctx,
 	                                                    &sessions,
-	                                                    target->name,
-	                                                    target_name_len);
+	                                                    recipient,
+	                                                    recipient_len);
 	LOGr(r < 0, "signal_protocol_session_get_sub_device_sessions -> %d\n", r);
 	for (unsigned i=0; i<signal_int_list_size(sessions); i++) {
 		int device_id = signal_int_list_at(sessions, i);
 		struct signal_protocol_address addr = {
-			.name = target->name,
-			.name_len = target_name_len,
+			.name = recipient,
+			.name_len = recipient_len,
 			.device_id = device_id,
 		};
 		if ((!myself || device_id != my_device_id) &&
@@ -518,11 +518,13 @@ int (ksc_ws_send_message)(ws_s *ws, const struct ksc_ws *ksc,
 
 	ksc_free(content_packed);
 
-	char *path = ksc_ckprintf("/v1/messages/%s", target->name);
+	char *path = ksc_ckprintf("/v1/messages/%s", recipient);
 
 	FIOBJ msg = fiobj_hash_new();
-	fiobj_hash_set(msg, CSTR2FIOBJ("destination"), fiobj_str_new(target->name, target_name_len));
-	fiobj_hash_set(msg, CSTR2FIOBJ("timestamp"), fiobj_num_new(data.timestamp));
+	fiobj_hash_set(msg, CSTR2FIOBJ("destination"),
+	                    fiobj_str_new(recipient, recipient_len));
+	fiobj_hash_set(msg, CSTR2FIOBJ("timestamp"),
+	                    fiobj_num_new(data.timestamp));
 	fiobj_hash_set(msg, CSTR2FIOBJ("online"), fiobj_false());
 	FIOBJ msgs = fiobj_ary_new();
 	for (struct outgoing_push_message *m, *mn = message_list; (m = mn);) {

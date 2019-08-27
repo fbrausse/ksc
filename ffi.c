@@ -261,8 +261,7 @@ static int ffi_on_response(ws_s *ws, struct ksc_signal_response *response,
 	(void)ws;
 }
 
-int ksc_ffi_send_message(struct ksc_ffi *ffi,
-                         const char *target,
+int ksc_ffi_send_message(struct ksc_ffi *ffi, const char *recipient,
 	const char *body,
 	/*
 	bool end_session;*/
@@ -277,15 +276,12 @@ int ksc_ffi_send_message(struct ksc_ffi *ffi,
 {
 	if (!ffi->ws)
 		return -EBADF;
-	struct ksc_send_message_target tgt = {
-		.name = target,
-	};
 	struct ffi_send_message_data cb_data_ = {
 		.ffi = ffi,
 		.on_response = on_response,
 		.udata = udata,
 	}, *cb_data = ksc_memdup(&cb_data_, sizeof(cb_data_));
-	int r = ksc_ws_send_message(ffi->ws, ffi->kws, &tgt,
+	int r = ksc_ws_send_message(ffi->ws, ffi->kws, recipient,
 	                            .body = body,
 	                            .on_response = ffi_on_response,
 	                            .udata = cb_data,
