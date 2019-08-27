@@ -386,7 +386,7 @@ int main(int argc, char **argv)
 	const char *password = json_store_get_password_base64(js);
 	if (!number) {
 		fprintf(stderr, "no username, performing a device link\n");
-		r = ksc_defer_get_new_uuid(KSC_BASE_URL,
+		r = ksc_defer_get_new_uuid("wss://" KSC_SERVICE_HOST,
 		                           .new_uuid = handle_new_uuid,
 		                           .on_close = on_close_do_stop,
 		                           .udata = &ctx) < 0;

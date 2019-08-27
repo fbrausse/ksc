@@ -15,6 +15,7 @@
 #include <signal/protocol.h>
 #include <signal/signal_protocol.h>
 #include <signal/session_cipher.h>
+#include <signal/session_builder.h>
 
 static const struct ksc_log_context log_ctx = {
 	.desc = "ksc-ws",
@@ -364,6 +365,225 @@ static int on_send_message_response(ws_s *ws,
 	return r;
 }
 
+static FIOBJ get(FIOBJ v, const char *key, size_t len)
+{
+	FIOBJ k = fiobj_str_new(key, len);
+	FIOBJ r = fiobj_hash_get(v, k);
+	fiobj_free(k);
+	return r;
+}
+
+#define GET(v, cstr)	get(v, cstr, sizeof(cstr)-1)
+
+static ec_public_key * str2ec_public_key(FIOBJ s, const struct ksc_ws *ksc)
+{
+	fio_str_info_s b64 = fiobj_obj2cstr(s);
+	ssize_t sz = ksc_base64_decode_size(b64.data, b64.len);
+	LOGr(sz != 33, "str2ec_public_key: base64-decoded data size: %zu\n", sz);
+	if (sz != 33)
+		return NULL;
+	uint8_t data[sz];
+	ssize_t decoded = ksc_base64_decode(data, b64.data, b64.len);
+	assert(decoded == sz);
+	ec_public_key *key = NULL;
+	int r = curve_decode_point(&key, data, sz, ksc->ctx);
+	LOGr(r, "curve_decode_point pub_key -> %d\n", r);
+	return key;
+}
+
+static int handle_hash_pk_bundle(FIOBJ response, const char *name, size_t name_len,
+                                 const struct ksc_ws *ksc)
+{
+	FIOBJ devices = GET(response, "devices");
+
+	ec_public_key *identity_key = str2ec_public_key(GET(response, "identityKey"), ksc);
+	LOGr(!identity_key, "decoding pre-key identity key\n");
+
+	int r;
+	while (fiobj_ary_count(devices)) {
+		FIOBJ device = fiobj_ary_pop(devices);
+		FIOBJ device_id = GET(device, "deviceId");
+		FIOBJ registration_id = GET(device, "registrationId");
+		FIOBJ signed_pre_key = GET(device, "signedPreKey");
+		FIOBJ pre_key = GET(device, "preKey");
+		FIOBJ signed_key_id = GET(signed_pre_key, "keyId");
+		FIOBJ signed_sign = GET(signed_pre_key, "signature");
+		FIOBJ pre_key_id = GET(pre_key, "keyId");
+
+		ec_public_key *pre_pub_key = NULL;
+		ec_public_key *signed_pub_key = NULL;
+		session_pre_key_bundle *bundle = NULL;
+		session_builder *builder = NULL;
+
+		pre_pub_key = str2ec_public_key(GET(pre_key, "publicKey"), ksc);
+		LOGr(!pre_pub_key, "decoding pre-key public key\n");
+		if (!pre_pub_key)
+			goto skip;
+
+		signed_pub_key = str2ec_public_key(GET(signed_pre_key, "publicKey"), ksc);
+		LOGr(!signed_pub_key, "decoding pre-key signed public key\n");
+		if (!signed_pub_key)
+			goto skip;
+
+		fio_str_info_s sign = fiobj_obj2cstr(signed_sign);
+		assert(ksc_base64_decode_size((char *)sign.data, sign.len) == CURVE_SIGNATURE_LEN);
+		uint8_t sign_data[CURVE_SIGNATURE_LEN];
+		ssize_t decoded = ksc_base64_decode(sign_data, (char *)sign.data, sign.len);
+		assert(decoded == CURVE_SIGNATURE_LEN);
+
+		r = session_pre_key_bundle_create(&bundle,
+			fiobj_obj2num(registration_id),
+			fiobj_obj2num(device_id),
+			fiobj_obj2num(pre_key_id),
+			pre_pub_key,
+			fiobj_obj2num(signed_key_id),
+			signed_pub_key,
+			sign_data, CURVE_SIGNATURE_LEN,
+			identity_key);
+		LOGr(r, "session_pre_key_bundle_create -> %d\n", r);
+		if (r)
+			goto skip;
+
+		signal_protocol_address addr = {
+			.name = name,
+			.name_len = name_len,
+			.device_id = fiobj_obj2num(device_id),
+		};
+		r = session_builder_create(&builder, ksc->psctx, &addr, ksc->ctx);
+		LOGr(r, "session_builder_create -> %d\n", r);
+		if (r)
+			goto skip;
+
+		r = session_builder_process_pre_key_bundle(builder, bundle);
+		LOGr(r, "session_builder_process_pre_key_bundle -> %d\n", r);
+
+skip:
+		session_builder_free(builder);
+		SIGNAL_UNREF(bundle);
+		SIGNAL_UNREF(signed_pub_key);
+		SIGNAL_UNREF(pre_pub_key);
+		fiobj_free(device);
+	}
+
+	SIGNAL_UNREF(identity_key);
+
+	return r;
+}
+
+#define PREKEY_DEFAULT_DEVICE_PATH	"/v2/keys/%.*s/*"
+#define PREKEY_DEVICE_PATH		"/v2/keys/%.*s/%" PRId32
+
+struct send_message_data2 {
+	ws_s *ws;
+	uint64_t timestamp;
+	struct ksc_ws_send_message_args args;
+	uint8_t *content_packed;
+	size_t content_sz;
+};
+
+struct prekey_request_data {
+	char *name;
+	size_t name_len;
+	const struct ksc_ws *ksc;
+	bool requested;
+	bool received;
+	FIOBJ auth;
+
+	struct send_message_data2 data;
+};
+
+static int send_message_final(const char *recipient, size_t recipient_len,
+                              const struct ksc_ws *ksc,
+                              struct send_message_data2 data);
+
+static void on_prekey_response(http_s *h)
+{
+	struct prekey_request_data *pr = h->udata;
+	http_settings_s *s = http_settings(h);
+	KSC_DEBUG(DEBUG, "on_prekey_response %zu, requested: %d, udata: %p, settings: %p, settings udata: %p\n",
+	    h->status, pr->requested, h->udata, (void *)s, s->udata);
+	KSC_DEBUG(DEBUG, "  path: %s\n", fiobj_obj2cstr(h->path).data);
+	s->udata = pr; /* why is this necessary? bug in facil.io? */
+	const struct ksc_ws *ksc = pr->ksc;
+	if (pr->requested) {
+		if (200 <= h->status && h->status < 300) {
+			FIOBJ response;
+			fio_str_info_s s = fiobj_obj2cstr(h->body);
+			ssize_t decoded = fiobj_json2obj(&response, s.data, s.len);
+			if (decoded) {
+				int r = handle_hash_pk_bundle(response, pr->name, pr->name_len, ksc);
+				LOGr(r, "handle_hash_pk_bundle() -> %d\n", r);
+				fiobj_free(response);
+				if (!r) {
+					r = send_message_final(pr->name, pr->name_len, ksc, pr->data);
+					LOGr(r, "send_message_final() -> %d\n", r);
+				}
+			}
+		} else if (h->status == 413) {
+			LOG(ERROR, "server refuses to send us the pre-key data...\n");
+			/* TODO: retry or delete data2 contents */
+		}
+	}
+	if (!pr->requested) {
+		h->method = fiobj_str_new("GET", 3);
+		pr->requested = true;
+		http_set_header(h, fiobj_str_new("Authorization", 13), pr->auth);
+		http_send_body(h, NULL, 0);
+	} else
+		http_finish(h);
+}
+
+static void on_prekey_finish(http_settings_s *s)
+{
+	struct prekey_request_data *pr = s->udata;
+	const struct ksc_ws *ksc = pr->ksc;
+	LOG(DEBUG, "on_prekey_finish()\n");
+	free(pr);
+}
+
+static intptr_t get_pre_keys(const signal_protocol_address *addr,
+                             const struct ksc_ws *ksc,
+                             struct send_message_data2 data2)
+{
+	/* get pre-keys via PushServiceSocket, aka standard HTTPS request */
+	const char *user = json_store_get_username(ksc->js);
+	const char *pass = json_store_get_password_base64(ksc->js);
+
+	char *auth = ksc_ckprintf("%s:%s", user, pass);
+	size_t auth_len = strlen(auth);
+	char auth_enc[auth_len*4/3+4 + 6];
+	memcpy(auth_enc, "Basic ", 6);
+	size_t auth_enc_len = ksc_base64_encode(auth_enc + 6, (uint8_t *)auth, auth_len);
+	FIOBJ auth_header = fiobj_str_new(auth_enc, 6+auth_enc_len);
+	free(auth);
+
+	char *url = addr->device_id == 1
+	           ? ksc_ckprintf("https://%%2B%s:%s@" KSC_SERVICE_HOST PREKEY_DEFAULT_DEVICE_PATH,
+	                          user+1, pass, (int)addr->name_len, addr->name)
+	           : ksc_ckprintf("https://%%2B%s:%s@" KSC_SERVICE_HOST PREKEY_DEVICE_PATH,
+	                          user+1, pass, (int)addr->name_len, addr->name,
+	                          addr->device_id);
+	struct prekey_request_data pr = {
+		.name = ksc_memdup(addr->name, addr->name_len),
+		.name_len = addr->name_len,
+		.ksc = ksc,
+		.auth = auth_header,
+		.data = data2,
+	};
+	fio_tls_s *tls = ksc_signal_tls(ksc->args.server_cert_path);
+	LOG(NOTE, "getting pre-keys, connecting to %s\n", url);
+	intptr_t r = http_connect(url, NULL,
+	                          .on_response = on_prekey_response,
+	                          .on_finish = on_prekey_finish,
+	                          .udata = ksc_memdup(&pr, sizeof(pr)),
+	                          .tls = tls);
+	fio_tls_destroy(tls);
+
+	free(url);
+
+	return r;
+}
+
 struct outgoing_push_message {
 	struct outgoing_push_message *next;
 	size_t content_sz;
@@ -380,8 +600,9 @@ static int encrypt_for(const signal_protocol_address *addr,
                        struct outgoing_push_message **result)
 {
 	if (!signal_protocol_session_contains_session(ksc->psctx, addr)) {
-		/* TODO: get pre-keys via PushServiceSocket */
-		return -1;
+		LOG(WARN, "encrypt_for: no session for %.*s.%" PRId32 "\n",
+		    (int)addr->name_len, addr->name, addr->device_id);
+		return SG_ERR_NO_SESSION;
 	}
 
 	session_cipher *cipher = NULL;
@@ -437,7 +658,6 @@ done:
 	else
 		ksc_free(msg);
 	return r;
-
 }
 
 #define DEFAULT_DEVICE_ID	1
@@ -447,6 +667,131 @@ done:
 /* not exported by libsignal-protocol-c :/ */
 void signal_lock(signal_context *context);
 void signal_unlock(signal_context *context);
+
+static int send_message_final(const char *recipient, size_t recipient_len,
+                              const struct ksc_ws *ksc,
+                              struct send_message_data2 data)
+{
+	signal_lock(ksc->ctx);
+	bool myself = !strcmp(json_store_get_username(ksc->js), recipient);
+	int32_t my_device_id;
+	if (!json_store_get_device_id(ksc->js, &my_device_id))
+		my_device_id = DEFAULT_DEVICE_ID;
+	signal_int_list *sessions = NULL;
+	int r;
+	r = signal_protocol_session_get_sub_device_sessions(ksc->psctx,
+	                                                    &sessions,
+	                                                    recipient,
+	                                                    recipient_len);
+	LOGr(r < 0, "signal_protocol_session_get_sub_device_sessions -> %d\n", r);
+	signal_unlock(ksc->ctx);
+	struct outgoing_push_message *message_list = NULL, **message_tail = &message_list;
+
+	if (!myself || my_device_id != DEFAULT_DEVICE_ID /* || unidentifiedAccess */) {
+		/* encrypt for (target->name, DEFAULT_DEVICE_ID) */
+		r = encrypt_for(&(struct signal_protocol_address){
+			.name = recipient,
+			.name_len = recipient_len,
+			.device_id = DEFAULT_DEVICE_ID,
+		}, ksc, data.content_packed, data.content_sz, message_tail);
+		LOGr(r, "encrypt_for default device -> %d\n", r);
+		message_tail = &(*message_tail)->next;
+		if (r)
+			goto done;
+	}
+	for (unsigned i=0; i<signal_int_list_size(sessions); i++) {
+		int device_id = signal_int_list_at(sessions, i);
+		struct signal_protocol_address addr = {
+			.name = recipient,
+			.name_len = recipient_len,
+			.device_id = device_id,
+		};
+		if ((!myself || device_id != my_device_id) &&
+		    signal_protocol_session_contains_session(ksc->psctx, &addr)) {
+			r = encrypt_for(&addr, ksc, data.content_packed,
+			                data.content_sz, message_tail);
+			LOGr(r, "encrypt_for device %d -> %d\n", device_id, r);
+			message_tail = &(*message_tail)->next;
+			if (r)
+				goto done;
+		}
+	}
+	signal_int_list_free(sessions);
+
+	LOGr(!message_list, "message_list: %p\n", message_list);
+
+	ksc_free(data.content_packed);
+
+	char *path = ksc_ckprintf("/v1/messages/%s", recipient);
+
+	FIOBJ msg = fiobj_hash_new();
+	fiobj_hash_set(msg, CSTR2FIOBJ("destination"),
+	                    fiobj_str_new(recipient, recipient_len));
+	fiobj_hash_set(msg, CSTR2FIOBJ("timestamp"),
+	                    fiobj_num_new(data.timestamp));
+	fiobj_hash_set(msg, CSTR2FIOBJ("online"), fiobj_false());
+	FIOBJ msgs = fiobj_ary_new();
+	for (struct outgoing_push_message *m = message_list; m; m = m->next) {
+		FIOBJ f = fiobj_hash_new();
+		fiobj_hash_set(f, CSTR2FIOBJ("type"), fiobj_num_new(m->type));
+		fiobj_hash_set(f, CSTR2FIOBJ("destinationDeviceId"),
+		                  fiobj_num_new(m->destination_device_id));
+		fiobj_hash_set(f, CSTR2FIOBJ("destinationRegistrationId"),
+		                  fiobj_num_new(m->destination_registration_id));
+		fiobj_hash_set(f, CSTR2FIOBJ("content"),
+		                  fiobj_str_new(m->content, m->content_sz));
+		fiobj_ary_push(msgs, f);
+	}
+	fiobj_hash_set(msg, CSTR2FIOBJ("messages"), msgs);
+	FIOBJ json = fiobj_obj2json(msg, 0);
+	fio_str_info_s json_c = fiobj_obj2cstr(json);
+
+	LOG(DEBUG, "sending JSON: %.*s\n", (int)json_c.len, json_c.data);
+
+	struct send_message_data cb_data = {
+		.ksc = ksc,
+		.on_response = data.args.on_response,
+		.udata = data.args.udata,
+	};
+
+	static char *headers[] = {
+		"Content-Type: application/json"
+	};
+	r = ksc_ws_send_request(data.ws, "PUT", path,
+	                        .size = json_c.len,
+	                        .body = json_c.data,
+	                        .headers = headers,
+	                        .n_headers = ARRAY_SIZE(headers),
+	                        .on_response = on_send_message_response,
+	                        .udata = ksc_memdup(&cb_data, sizeof(cb_data)));
+
+	fiobj_free(json);
+	fiobj_free(msg);
+	ksc_free(path);
+
+	LOGr(r, "ksc_ws_send_request -> %d\n", r);
+
+	if (data.args.end_session) {
+		r = signal_protocol_session_delete_all_sessions(ksc->psctx,
+		                                                recipient,
+		                                                recipient_len);
+		LOGr(r < 0,
+		     "signal_protocol_session_delete_all_sessions -> %d\n", r);
+		if (r > 0)
+			r = 0;
+	}
+
+	/* TODO: directly encode into FIOBJ w/o going via struct outgoing_push_message */
+
+done:
+	for (struct outgoing_push_message *m, *mn = message_list; (m = mn);) {
+		mn = m->next;
+		ksc_free(m);
+	}
+	message_list = NULL, message_tail = &message_list;
+
+	return r;
+}
 
 #define PADDING			160
 
@@ -475,8 +820,6 @@ int (ksc_ws_send_message)(ws_s *ws, const struct ksc_ws *ksc,
 
 	ksc_one_and_zeroes_pad(content_packed, &content_sz, PADDING);
 
-	struct outgoing_push_message *message_list = NULL, **message_tail = &message_list;
-
 	signal_lock(ksc->ctx);
 	bool myself = !strcmp(json_store_get_username(ksc->js), recipient);
 	int32_t my_device_id;
@@ -484,100 +827,59 @@ int (ksc_ws_send_message)(ws_s *ws, const struct ksc_ws *ksc,
 		my_device_id = DEFAULT_DEVICE_ID;
 	int r = 0;
 	size_t recipient_len = strlen(recipient);
-	if (!myself || my_device_id != DEFAULT_DEVICE_ID /* || unidentifiedAccess */) {
-		/* encrypt for (target->name, DEFAULT_DEVICE_ID) */
-		r = encrypt_for(&(struct signal_protocol_address){
-			.name = recipient,
-			.name_len = recipient_len,
-			.device_id = DEFAULT_DEVICE_ID,
-		}, ksc, content_packed, content_sz, message_tail);
-		LOGr(r, "encrypt_for default device -> %d\n", r);
-		message_tail = &(*message_tail)->next;
-	}
+
+	bool any_device = false;
+	bool single_device = false;
+	int32_t single_device_id;
+
 	signal_int_list *sessions = NULL;
 	r = signal_protocol_session_get_sub_device_sessions(ksc->psctx,
 	                                                    &sessions,
 	                                                    recipient,
 	                                                    recipient_len);
 	LOGr(r < 0, "signal_protocol_session_get_sub_device_sessions -> %d\n", r);
+	signal_unlock(ksc->ctx);
+
+	if (!myself || my_device_id != DEFAULT_DEVICE_ID)
+		if (!signal_protocol_session_contains_session(ksc->psctx, &(struct signal_protocol_address){
+			.name = recipient,
+			.name_len = recipient_len,
+			.device_id = DEFAULT_DEVICE_ID,
+		})) {
+			any_device = true;
+			single_device = true;
+			single_device_id = DEFAULT_DEVICE_ID;
+		}
+
 	for (unsigned i=0; i<signal_int_list_size(sessions); i++) {
 		int device_id = signal_int_list_at(sessions, i);
-		struct signal_protocol_address addr = {
+		if (!signal_protocol_session_contains_session(ksc->psctx, &(struct signal_protocol_address){
 			.name = recipient,
 			.name_len = recipient_len,
 			.device_id = device_id,
-		};
-		if ((!myself || device_id != my_device_id) &&
-		    signal_protocol_session_contains_session(ksc->psctx, &addr)) {
-			r = encrypt_for(&addr, ksc, content_packed, content_sz,
-			                message_tail);
-			LOGr(r, "encrypt_for device %d -> %d\n", device_id, r);
-			message_tail = &(*message_tail)->next;
+		})) {
+			if (single_device)
+				single_device &= single_device_id == device_id;
+			single_device_id = device_id;
+			any_device = true;
 		}
 	}
 	signal_int_list_free(sessions);
-	signal_unlock(ksc->ctx);
 
-	LOGr(!message_list, "message_list: %p\n", message_list);
-
-	ksc_free(content_packed);
-
-	char *path = ksc_ckprintf("/v1/messages/%s", recipient);
-
-	FIOBJ msg = fiobj_hash_new();
-	fiobj_hash_set(msg, CSTR2FIOBJ("destination"),
-	                    fiobj_str_new(recipient, recipient_len));
-	fiobj_hash_set(msg, CSTR2FIOBJ("timestamp"),
-	                    fiobj_num_new(data.timestamp));
-	fiobj_hash_set(msg, CSTR2FIOBJ("online"), fiobj_false());
-	FIOBJ msgs = fiobj_ary_new();
-	for (struct outgoing_push_message *m, *mn = message_list; (m = mn);) {
-		mn = m->next;
-		FIOBJ f = fiobj_hash_new();
-		fiobj_hash_set(f, CSTR2FIOBJ("type"), fiobj_num_new(m->type));
-		fiobj_hash_set(f, CSTR2FIOBJ("destinationDeviceId"),
-		                  fiobj_num_new(m->destination_device_id));
-		fiobj_hash_set(f, CSTR2FIOBJ("destinationRegistrationId"),
-		                  fiobj_num_new(m->destination_registration_id));
-		fiobj_hash_set(f, CSTR2FIOBJ("content"),
-		                  fiobj_str_new(m->content, m->content_sz));
-		fiobj_ary_push(msgs, f);
-		ksc_free(m);
-	}
-	message_list = NULL, message_tail = &message_list;
-	fiobj_hash_set(msg, CSTR2FIOBJ("messages"), msgs);
-	FIOBJ json = fiobj_obj2json(msg, 0);
-	fio_str_info_s json_c = fiobj_obj2cstr(json);
-
-	LOG(DEBUG, "sending JSON: %.*s\n", (int)json_c.len, json_c.data);
-
-	struct send_message_data cb_data = {
-		.ksc = ksc,
-		.on_response = args.on_response,
-		.udata = args.udata,
+	struct send_message_data2 data2 = {
+		ws, data.timestamp, args, content_packed, content_sz,
 	};
-
-	static char *headers[] = {
-		"Content-Type: application/json"
-	};
-	r = ksc_ws_send_request(ws, "PUT", path,
-	                        .size = json_c.len,
-	                        .body = json_c.data,
-	                        .headers = headers,
-	                        .n_headers = ARRAY_SIZE(headers),
-	                        .on_response = on_send_message_response,
-	                        .udata = ksc_memdup(&cb_data, sizeof(cb_data)));
-
-	fiobj_free(json);
-	fiobj_free(msg);
-	ksc_free(path);
-
-	LOGr(r, "ksc_ws_send_request -> %d\n", r);
-
-	/* TODO: directly encode into FIOBJ w/o going via struct outgoing_push_message */
-
-	return r;
+	if (any_device) {
+		intptr_t sock = get_pre_keys(&(struct signal_protocol_address){
+			.name = recipient,
+			.name_len = recipient_len,
+			.device_id = single_device ? single_device_id : DEFAULT_DEVICE_ID,
+		}, ksc, data2);
+		return sock < 0 ? sock : 0;
+	} else
+		return send_message_final(recipient, recipient_len, ksc, data2);
 }
+
 
 static void ksignal_ctx_destroy(struct ksc_ws *ksc)
 {
@@ -653,9 +955,9 @@ static struct ksc_ws * ksignal_ctx_create(struct json_store *js,
 	int32_t device_id;
 	ksc->url = json_store_get_device_id(js, &device_id)
 	         ? ksc_ckprintf("%s/v1/websocket/?login=%s.%" PRId32 "&password=%s",
-	                        KSC_BASE_URL, number, device_id, password)
+	                        "wss://" KSC_SERVICE_HOST, number, device_id, password)
 	         : ksc_ckprintf("%s/v1/websocket/?login=%s&password=%s",
-	                        KSC_BASE_URL, number, password);
+	                        "wss://" KSC_SERVICE_HOST, number, password);
 
 	int r = signal_context_create(&ksc->ctx, ksc);
 	if (r) {

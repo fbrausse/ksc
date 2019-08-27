@@ -18,7 +18,9 @@
 
 #define KSIGNAL_UNKNOWN_WS_PROTOBUF_ERR	(-0x73001)
 
-extern const char *const KSC_BASE_URL;
+#ifndef KSC_SERVICE_HOST
+# define KSC_SERVICE_HOST	"textsecure-service.whispersystems.org:443"
+#endif
 
 struct ksc_signal_response {
 	uint32_t status;
@@ -67,6 +69,8 @@ struct ksc_ws_connect_raw_args {
 	const char *server_cert_path;
 	void *udata;
 };
+
+fio_tls_s * ksc_signal_tls(const char *cert_path);
 
 intptr_t ksc_ws_connect_raw(const char *url, struct ksc_ws_connect_raw_args h);
 #define ksc_ws_connect_raw(url,...) \

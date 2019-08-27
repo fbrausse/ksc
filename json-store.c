@@ -587,7 +587,9 @@ static int sess_contains_session_func(const signal_protocol_address *address,
                                       void *user_data)
 {
 	struct json_store *js = user_data;
-	KSC_DEBUGL(DEBUG, js->log, "in %s()\n", __FUNCTION__);
+	KSC_DEBUGL(DEBUG, js->log, "in %s(), name: %.*s, deviceId: %d\n",
+	           __FUNCTION__, (int)address->name_len, address->name,
+	           address->device_id);
 	struct kjson_value *st = sess_store(js);
 	return find_by_address(st, address) ? 1 : 0;
 }

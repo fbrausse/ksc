@@ -62,7 +62,7 @@ static inline void ksc_free(void *ptr)
 	free(ptr);
 }
 
-static inline void * ksc_memdup(void *p, size_t sz)
+static inline void * ksc_memdup(const void *p, size_t sz)
 {
 	return memcpy(ksc_malloc(sz), p, sz);
 }

@@ -30,8 +30,6 @@ static const struct ksc_log_context log_ctx = {
 #define LOG_(level,...)		LOGL_(level, h->log, __VA_ARGS__)
 #define LOG(lvl,...)		LOGL(lvl, h->log, __VA_ARGS__)
 
-const char *const KSC_BASE_URL = "wss://textsecure-service.whispersystems.org:443";
-
 static int signal_ws_send(ws_s *s, ProtobufCMessage *request_or_response)
 {
 	struct ksc_ws_connect_raw_args *h = websocket_udata_get(s);
@@ -396,7 +394,7 @@ static void _on_websocket_http_connection_finished(http_settings_s *settings) {
   }
 }
 
-static fio_tls_s * signal_tls(const char *cert_path)
+fio_tls_s * ksc_signal_tls(const char *cert_path)
 {
 	// fio_tls_s *tls = fio_tls_new("textsecure-service.whispersystems.org", NULL, NULL, NULL);
 	fio_tls_s *tls = fio_tls_new(NULL, NULL, NULL, NULL);
@@ -419,7 +417,7 @@ intptr_t (ksc_ws_connect_raw)(const char *url, struct ksc_ws_connect_raw_args h)
 		.on_close    = _signal_ws_on_close,
 		.udata       = ksc_memdup(&h, sizeof(h)),
 	};
-	fio_tls_s *tls = signal_tls(h.server_cert_path);
+	fio_tls_s *tls = ksc_signal_tls(h.server_cert_path);
 	intptr_t r = http_connect(url, NULL,
 	                     .on_request = _on_websocket_http_connected,
 	                     .on_response = _on_websocket_http_connected,
