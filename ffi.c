@@ -263,8 +263,7 @@ static int ffi_on_response(ws_s *ws, struct ksc_signal_response *response,
 
 int ksc_ffi_send_message(struct ksc_ffi *ffi, const char *recipient,
 	const char *body,
-	/*
-	bool end_session;*/
+	int end_session,
 	/*
 	const void *const *attachments;
 	size_t n_attachments;*/
@@ -283,6 +282,7 @@ int ksc_ffi_send_message(struct ksc_ffi *ffi, const char *recipient,
 	}, *cb_data = ksc_memdup(&cb_data_, sizeof(cb_data_));
 	int r = ksc_ws_send_message(ffi->ws, ffi->kws, recipient,
 	                            .body = body,
+	                            .end_session = end_session,
 	                            .on_response = ffi_on_response,
 	                            .udata = cb_data,
 	);

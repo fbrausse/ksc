@@ -53,6 +53,7 @@ class ksc_ffi:
 			'send_message': (c_int, (ksc_p,
 			                         c_char_p, # recipient
 			                         c_char_p, # body
+			                         c_int, # end_session
 			                         CFUNCTYPE(c_int, c_int, c_char_p, c_void_p), # on_response
 			                         c_void_p)),
 		}.items():
@@ -95,9 +96,9 @@ class ksc:
 	def stop(self, k):
 		self._ffi.stop(k)
 
-	def send_message(self, k, recipient, body, on_response = None, data = None):
-		return self._ffi.send_message(k, recipient.encode(), body.encode(),
-		                              self._ffi.send_message.argtypes[3](ksc._zero(on_response)),
+	def send_message(self, k, recipient, body, end_session = False, on_response = None, data = None):
+		return self._ffi.send_message(k, recipient.encode(), body.encode(), end_session,
+		                              self._ffi.send_message.argtypes[4](ksc._zero(on_response)),
 		                              data)
 
 """

@@ -457,6 +457,10 @@ int (ksc_ws_send_message)(ws_s *ws, const struct ksc_ws *ksc,
 	Signalservice__DataMessage data = SIGNALSERVICE__DATA_MESSAGE__INIT;
 
 	data.body = (char *)args.body;
+	if (args.end_session) {
+		data.flags |= SIGNALSERVICE__DATA_MESSAGE__FLAGS__END_SESSION;
+		data.has_flags = true;
+	}
 	struct timeval tv;
 	gettimeofday(&tv, NULL);
 	data.timestamp = tv.tv_sec * 1000 + tv.tv_usec / 1000;

@@ -64,8 +64,7 @@ void ksc_ffi_stop(struct ksc_ffi *);
 int ksc_ffi_send_message(struct ksc_ffi *ffi,
                          const char *recipient,
 	const char *body,
-	/*
-	bool end_session;*/
+	int end_session,
 	/*
 	const void *const *attachments;
 	size_t n_attachments;*/

@@ -94,6 +94,7 @@ static void print_data_message(int fd, Signalservice__DataMessage *e)
 struct ksc_ctx {
 	struct ksc_log log;
 	const char *message;
+	bool end_session;
 };
 
 static void on_close_do_stop(intptr_t uuid, void *udata)
@@ -227,6 +228,7 @@ static void send_get_profile(ws_s *s, const struct ksc_ws *kws)
 #elif defined(DEFAULT_GET_PROFILE_NUMBER)
 	if (ksc->message) {
 		int r = ksc_ws_send_message(s, kws, DEFAULT_GET_PROFILE_NUMBER,
+		                            .end_session = ksc->end_session,
 		                            .body = ksc->message);
 		LOG(DEBUG, "send -> %d\n", r);
 	}
@@ -328,9 +330,11 @@ int main(int argc, char **argv)
 	const char *cert_path = KSIGNAL_SERVER_CERT;
 	bool force = false;
 	const char *message = NULL;
-	for (int opt; (opt = getopt(argc, argv, ":c:fhm:p:v:")) != -1;)
+	bool end_session = false;
+	for (int opt; (opt = getopt(argc, argv, ":c:efhm:p:v:")) != -1;)
 		switch (opt) {
 		case 'c': cert_path = optarg; break;
+		case 'e': end_session = true; break;
 		case 'f': force = true; break;
 		case 'h':
 			fprintf(stderr, "usage: %s [-c CERT_PATH] [-f] [-m MESSAGE] [-p CLI_CONFIG_PATH] [-v ARG]\n", argv[0]);
@@ -366,6 +370,7 @@ int main(int argc, char **argv)
 	struct ksc_ctx ctx = {
 		.log = log,
 		.message = message,
+		.end_session = end_session,
 	};
 	struct json_store *js = NULL;
 	js = json_store_create(cli_path, &ctx.log);

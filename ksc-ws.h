@@ -23,8 +23,7 @@ void * ksc_ws_get_udata(const struct ksc_ws *kws);
 
 struct ksc_ws_send_message_args {
 	const char *body;
-	/*
-	bool end_session;*/
+	bool end_session;
 	/*
 	const void *const *attachments;
 	size_t n_attachments;*/
