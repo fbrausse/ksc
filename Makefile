@@ -46,7 +46,7 @@ override CLDFLAGS := \
 
 override CFLAGS := \
 	-MD \
-	$(shell $(PKG_CONFIG) --cflags libsignal-protocol-c,$(PKGS)) \
+	$(shell $(PKG_CONFIG) --cflags $(PKGS)) \
 	-Wall -Wextra \
 	$(CLDFLAGS) \
 	$(CFLAGS) \
@@ -72,8 +72,8 @@ COMMON_OBJS = \
 	$(PROTO_FILES:.proto=.pb-c.o) \
 
 LIB_OBJS = $(addprefix pic/,\
-	$(COMMON_OBJS) \
 	ffi.o \
+	$(COMMON_OBJS) \
 )
 
 OBJS = \
@@ -96,7 +96,7 @@ PROTO_FILES = \
 
 all: test libksc.so
 
-libksc.so: $(LIB_OBJS) | pic/
+libksc.so: $(LIB_OBJS)
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $^ $(LDLIBS)
 
 test: $(OBJS)
@@ -105,14 +105,15 @@ $(OBJS): %.o: %.c Makefile protos
 
 test.o: override CPPFLAGS += -DKSIGNAL_SERVER_CERT='"$(TS_SERVER_CERT)"'
 
-$(PROTO_FILES:.proto=.pb-c.c) $(PROTO_FILES:.proto=.pb-c.h): protos
+$(PROTO_FILES:.proto=.pb-c.c) \
+$(PROTO_FILES:.proto=.pb-c.h): protos
 
 protos: $(addprefix $(SERVICE_PROTO_PATH)/,$(SERVICE_PROTO_FILES)) $(LOCAL_PROTO_FILES)
 	$(PROTOC_C) --c_out=. --proto_path=$(SERVICE_PROTO_PATH) --proto_path=. $(PROTO_FILES) && touch $@
 
 pic/%.o: override CFLAGS += -fPIC
 
-$(LIB_OBJS): pic/%.o: %.c Makefile protos
+$(LIB_OBJS): pic/%.o: %.c Makefile protos | pic/
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c -o $@ $<
 
 %/:
