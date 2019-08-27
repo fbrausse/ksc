@@ -506,21 +506,31 @@ static void on_prekey_response(http_s *h)
 	s->udata = pr; /* why is this necessary? bug in facil.io? */
 	const struct ksc_ws *ksc = pr->ksc;
 	if (pr->requested) {
+		int r = -1;
 		if (200 <= h->status && h->status < 300) {
 			FIOBJ response;
 			fio_str_info_s s = fiobj_obj2cstr(h->body);
-			ssize_t decoded = fiobj_json2obj(&response, s.data, s.len);
-			if (decoded) {
-				int r = handle_hash_pk_bundle(response, pr->name, pr->name_len, ksc);
+			if (s.len && fiobj_json2obj(&response, s.data, s.len)) {
+				r = handle_hash_pk_bundle(response, pr->name, pr->name_len, ksc);
 				LOGr(r, "handle_hash_pk_bundle() -> %d\n", r);
 				fiobj_free(response);
-				if (!r) {
-					r = send_message_final(pr->name, pr->name_len, ksc, pr->data);
-					LOGr(r, "send_message_final() -> %d\n", r);
+			} else {
+				LOG(ERROR, "error JSON-decoding pre-key response: ");
+				if (ksc_log_prints(KSC_LOG_ERROR, ksc->args.log, &log_ctx)) {
+					int fd = (ksc->args.log ? ksc->args.log : &KSC_DEFAULT_LOG)->fd;
+					ksc_dprint_hex(fd, (uint8_t *)s.data, s.len);
+					dprintf(fd, "\n");
 				}
 			}
-		} else if (h->status == 413) {
+			if (!r) {
+				r = send_message_final(pr->name, pr->name_len, ksc, pr->data);
+				LOGr(r, "send_message_final() -> %d\n", r);
+			}
+		}
+		if (h->status == 413) {
 			LOG(ERROR, "server refuses to send us the pre-key data...\n");
+		}
+		if (r) {
 			/* TODO: retry or delete data2 contents */
 		}
 	}
@@ -558,11 +568,11 @@ static intptr_t get_pre_keys(const signal_protocol_address *addr,
 	free(auth);
 
 	char *url = addr->device_id == 1
-	           ? ksc_ckprintf("https://" KSC_SERVICE_HOST PREKEY_DEFAULT_DEVICE_PATH,
-	                          (int)addr->name_len, addr->name)
-	           : ksc_ckprintf("https://" KSC_SERVICE_HOST PREKEY_DEVICE_PATH,
-	                          (int)addr->name_len, addr->name,
-	                          addr->device_id);
+	          ? ksc_ckprintf("https://" KSC_SERVICE_HOST PREKEY_DEFAULT_DEVICE_PATH,
+	                         (int)addr->name_len, addr->name)
+	          : ksc_ckprintf("https://" KSC_SERVICE_HOST PREKEY_DEVICE_PATH,
+	                         (int)addr->name_len, addr->name,
+	                         addr->device_id);
 	struct prekey_request_data pr = {
 		.name = ksc_memdup(addr->name, addr->name_len),
 		.name_len = addr->name_len,

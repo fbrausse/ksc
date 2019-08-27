@@ -19,7 +19,7 @@
 #define KSIGNAL_UNKNOWN_WS_PROTOBUF_ERR	(-0x73001)
 
 #ifndef KSC_SERVICE_HOST
-# define KSC_SERVICE_HOST	"textsecure-service.whispersystems.org:443"
+# define KSC_SERVICE_HOST	"textsecure-service.whispersystems.org"
 #endif
 
 struct ksc_signal_response {
