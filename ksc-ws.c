@@ -558,10 +558,10 @@ static intptr_t get_pre_keys(const signal_protocol_address *addr,
 	free(auth);
 
 	char *url = addr->device_id == 1
-	           ? ksc_ckprintf("https://%%2B%s:%s@" KSC_SERVICE_HOST PREKEY_DEFAULT_DEVICE_PATH,
-	                          user+1, pass, (int)addr->name_len, addr->name)
-	           : ksc_ckprintf("https://%%2B%s:%s@" KSC_SERVICE_HOST PREKEY_DEVICE_PATH,
-	                          user+1, pass, (int)addr->name_len, addr->name,
+	           ? ksc_ckprintf("https://" KSC_SERVICE_HOST PREKEY_DEFAULT_DEVICE_PATH,
+	                          (int)addr->name_len, addr->name)
+	           : ksc_ckprintf("https://" KSC_SERVICE_HOST PREKEY_DEVICE_PATH,
+	                          (int)addr->name_len, addr->name,
 	                          addr->device_id);
 	struct prekey_request_data pr = {
 		.name = ksc_memdup(addr->name, addr->name_len),
