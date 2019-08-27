@@ -581,12 +581,16 @@ static intptr_t get_pre_keys(const signal_protocol_address *addr,
 	const char *user = json_store_get_username(ksc->js);
 	const char *pass = json_store_get_password_base64(ksc->js);
 
-	char *auth = ksc_ckprintf("%s:%s", user, pass);
+	int32_t my_device_id;
+	char *auth = json_store_get_device_id(ksc->js, &my_device_id)
+	           ? ksc_ckprintf("%s.%" PRId32 ":%s", user, my_device_id, pass)
+	           : ksc_ckprintf("%s:%s", user, pass);
+
 	size_t auth_len = strlen(auth);
-	char auth_enc[auth_len*4/3+4 + 6];
+	char auth_enc[6 + auth_len*4/3+4];
 	memcpy(auth_enc, "Basic ", 6);
 	size_t auth_enc_len = ksc_base64_encode(auth_enc + 6, (uint8_t *)auth, auth_len);
-	FIOBJ auth_header = fiobj_str_new(auth_enc, 6+auth_enc_len);
+	FIOBJ auth_header = fiobj_str_new(auth_enc, 6 + auth_enc_len);
 	free(auth);
 
 	char *url = addr->device_id == 1
