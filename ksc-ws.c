@@ -391,77 +391,96 @@ static ec_public_key * str2ec_public_key(FIOBJ s, const struct ksc_ws *ksc)
 	return key;
 }
 
-static int handle_hash_pk_bundle(FIOBJ response, const char *name, size_t name_len,
-                                 const struct ksc_ws *ksc)
+static int handle_hash_pk_bundle_device(FIOBJ device, const char *name,
+                                        size_t name_len,
+                                        const struct ksc_ws *ksc,
+                                        ec_public_key *identity_key)
 {
-	FIOBJ devices = GET(response, "devices");
+	FIOBJ device_id = GET(device, "deviceId");
+	FIOBJ registration_id = GET(device, "registrationId");
+	FIOBJ signed_pre_key = GET(device, "signedPreKey");
+	FIOBJ pre_key = GET(device, "preKey");
+	FIOBJ signed_key_id = GET(signed_pre_key, "keyId");
+	FIOBJ signed_sign = GET(signed_pre_key, "signature");
+	FIOBJ pre_key_id = GET(pre_key, "keyId");
 
-	ec_public_key *identity_key = str2ec_public_key(GET(response, "identityKey"), ksc);
-	LOGr(!identity_key, "decoding pre-key identity key\n");
-
+	ec_public_key *pre_pub_key = NULL;
+	ec_public_key *signed_pub_key = NULL;
+	session_pre_key_bundle *bundle = NULL;
+	session_builder *builder = NULL;
 	int r;
-	while (fiobj_ary_count(devices)) {
-		FIOBJ device = fiobj_ary_pop(devices);
-		FIOBJ device_id = GET(device, "deviceId");
-		FIOBJ registration_id = GET(device, "registrationId");
-		FIOBJ signed_pre_key = GET(device, "signedPreKey");
-		FIOBJ pre_key = GET(device, "preKey");
-		FIOBJ signed_key_id = GET(signed_pre_key, "keyId");
-		FIOBJ signed_sign = GET(signed_pre_key, "signature");
-		FIOBJ pre_key_id = GET(pre_key, "keyId");
 
-		ec_public_key *pre_pub_key = NULL;
-		ec_public_key *signed_pub_key = NULL;
-		session_pre_key_bundle *bundle = NULL;
-		session_builder *builder = NULL;
+	pre_pub_key = str2ec_public_key(GET(pre_key, "publicKey"), ksc);
+	LOGr(!pre_pub_key, "decoding pre-key public key\n");
+	if (!pre_pub_key) {
+		r = 1 << 1;
+		goto skip;
+	}
 
-		pre_pub_key = str2ec_public_key(GET(pre_key, "publicKey"), ksc);
-		LOGr(!pre_pub_key, "decoding pre-key public key\n");
-		if (!pre_pub_key)
-			goto skip;
+	signed_pub_key = str2ec_public_key(GET(signed_pre_key, "publicKey"), ksc);
+	LOGr(!signed_pub_key, "decoding pre-key signed public key\n");
+	if (!signed_pub_key) {
+		r = 1 << 2;
+		goto skip;
+	}
 
-		signed_pub_key = str2ec_public_key(GET(signed_pre_key, "publicKey"), ksc);
-		LOGr(!signed_pub_key, "decoding pre-key signed public key\n");
-		if (!signed_pub_key)
-			goto skip;
+	fio_str_info_s sign = fiobj_obj2cstr(signed_sign);
+	assert(ksc_base64_decode_size((char *)sign.data, sign.len) == CURVE_SIGNATURE_LEN);
+	uint8_t sign_data[CURVE_SIGNATURE_LEN];
+	ssize_t decoded = ksc_base64_decode(sign_data, (char *)sign.data, sign.len);
+	assert(decoded == CURVE_SIGNATURE_LEN);
 
-		fio_str_info_s sign = fiobj_obj2cstr(signed_sign);
-		assert(ksc_base64_decode_size((char *)sign.data, sign.len) == CURVE_SIGNATURE_LEN);
-		uint8_t sign_data[CURVE_SIGNATURE_LEN];
-		ssize_t decoded = ksc_base64_decode(sign_data, (char *)sign.data, sign.len);
-		assert(decoded == CURVE_SIGNATURE_LEN);
+	r = session_pre_key_bundle_create(&bundle,
+		fiobj_obj2num(registration_id),
+		fiobj_obj2num(device_id),
+		fiobj_obj2num(pre_key_id),
+		pre_pub_key,
+		fiobj_obj2num(signed_key_id),
+		signed_pub_key,
+		sign_data, CURVE_SIGNATURE_LEN,
+		identity_key);
+	LOGr(r, "session_pre_key_bundle_create -> %d\n", r);
+	if (r)
+		goto skip;
 
-		r = session_pre_key_bundle_create(&bundle,
-			fiobj_obj2num(registration_id),
-			fiobj_obj2num(device_id),
-			fiobj_obj2num(pre_key_id),
-			pre_pub_key,
-			fiobj_obj2num(signed_key_id),
-			signed_pub_key,
-			sign_data, CURVE_SIGNATURE_LEN,
-			identity_key);
-		LOGr(r, "session_pre_key_bundle_create -> %d\n", r);
-		if (r)
-			goto skip;
+	signal_protocol_address addr = {
+		.name = name,
+		.name_len = name_len,
+		.device_id = fiobj_obj2num(device_id),
+	};
+	r = session_builder_create(&builder, ksc->psctx, &addr, ksc->ctx);
+	LOGr(r, "session_builder_create -> %d\n", r);
+	if (r)
+		goto skip;
 
-		signal_protocol_address addr = {
-			.name = name,
-			.name_len = name_len,
-			.device_id = fiobj_obj2num(device_id),
-		};
-		r = session_builder_create(&builder, ksc->psctx, &addr, ksc->ctx);
-		LOGr(r, "session_builder_create -> %d\n", r);
-		if (r)
-			goto skip;
-
-		r = session_builder_process_pre_key_bundle(builder, bundle);
-		LOGr(r, "session_builder_process_pre_key_bundle -> %d\n", r);
+	r = session_builder_process_pre_key_bundle(builder, bundle);
+	LOGr(r, "session_builder_process_pre_key_bundle -> %d\n", r);
 
 skip:
-		session_builder_free(builder);
-		SIGNAL_UNREF(bundle);
-		SIGNAL_UNREF(signed_pub_key);
-		SIGNAL_UNREF(pre_pub_key);
+	session_builder_free(builder);
+	SIGNAL_UNREF(bundle);
+	SIGNAL_UNREF(signed_pub_key);
+	SIGNAL_UNREF(pre_pub_key);
+
+	return r;
+}
+
+static int handle_hash_pk_bundle(FIOBJ response, const char *name,
+                                 size_t name_len, const struct ksc_ws *ksc)
+{
+	ec_public_key *identity_key = NULL;
+	FIOBJ devices = GET(response, "devices");
+
+	identity_key = str2ec_public_key(GET(response, "identityKey"), ksc);
+	LOGr(!identity_key, "decoding pre-key identity key\n");
+	if (!identity_key)
+		return 1;
+
+	int r = 0;
+	while (fiobj_ary_count(devices)) {
+		FIOBJ device = fiobj_ary_pop(devices);
+		r |= handle_hash_pk_bundle_device(device, name, name_len, ksc,
+		                                  identity_key) != 0;
 		fiobj_free(device);
 	}
 
@@ -470,8 +489,7 @@ skip:
 	return r;
 }
 
-#define PREKEY_DEFAULT_DEVICE_PATH	"/v2/keys/%.*s/*"
-#define PREKEY_DEVICE_PATH		"/v2/keys/%.*s/%" PRId32
+#undef GET
 
 struct send_message_data2 {
 	ws_s *ws;
@@ -548,8 +566,12 @@ static void on_prekey_finish(http_settings_s *s)
 	struct prekey_request_data *pr = s->udata;
 	const struct ksc_ws *ksc = pr->ksc;
 	LOG(DEBUG, "on_prekey_finish()\n");
+	free(pr->name);
 	free(pr);
 }
+
+#define PREKEY_DEFAULT_DEVICE_PATH	"/v2/keys/%.*s/*"
+#define PREKEY_DEVICE_PATH		"/v2/keys/%.*s/%" PRId32
 
 static intptr_t get_pre_keys(const signal_protocol_address *addr,
                              const struct ksc_ws *ksc,
