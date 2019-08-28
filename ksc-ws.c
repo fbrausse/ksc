@@ -848,6 +848,15 @@ static int send_message_final(const char *recipient, size_t recipient_len,
 		.name_len = recipient_len,
 	};
 
+	if (ksc_log_prints(KSC_LOG_INFO, ksc->args.log, &log_ctx)) {
+		LOG(INFO, "sending message to %.*s (devices:",
+		           (int)recipient_len, recipient);
+		int fd = (ksc->args.log ? ksc->args.log : &KSC_DEFAULT_LOG)->fd;
+		for (size_t i=0; i<n_devices; i++)
+			dprintf(fd, " %" PRId32, devices[i]);
+		dprintf(fd, ")\n");
+	}
+
 	int32_t *a = devices;
 	for (int32_t *b = a; b < devices + n_devices; b++) {
 		/* encrypt for (target->name, DEFAULT_DEVICE_ID) */
