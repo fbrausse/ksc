@@ -16,11 +16,25 @@ PROTOC_C   ?= protoc-c
 
 -include default.mk
 
-my_datadir ?= $(datadir)/ksc
+prefix ?= /usr/local
+libdir ?= $(prefix)/lib
+bindir ?= $(prefix)/bin
+sharedir ?= $(prefix)/share
+datadir ?= $(sharedir)/$(PROJECT_NAME)
 
-TS_SERVER_CERT = $(my_datadir)/whisper.store.asn1
+TS_SERVER_CERT = $(DESTDIR)$(datadir)/whisper.store.asn1
 
 PKGS = facil libsignal-protocol-c kjson
+
+ifeq ($(OS),Windows_NT)
+  OS = Windows
+else
+  OS = $(shell uname)
+endif
+
+ifeq ($(OS),Darwin)
+libksc.so: override LDFLAGS += -dynamiclib -install_name $(realpath $(DESTDIR)$(libdir))/libksc.so
+endif
 
 ifdef GCRYPT
   CRYPT_OBJS = crypto-gcrypt.o

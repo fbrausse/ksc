@@ -1,5 +1,5 @@
 
-my_datadir = share
+datadir = share
 
 PKG_CONFIG_PATH = ../libsignal-protocol-c/installed/lib/pkgconfig:../facil.io/tmp/pkgconfig:../kjson/pkgconfig
 
