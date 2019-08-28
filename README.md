@@ -15,7 +15,7 @@ branch at the linked URL if not specified otherwise):
     cmake -DCMAKE_INSTALL_PREFIX=/some/prefix/path ..
     make install
     ```
-  - facil.io (branch `0.7.x`): https://github.com/fbrausse/facil.io
+  - facil.io (branch `0.7.x`): https://github.com/boazsegev/facil.io
     including TLS support (requires `openssl-1.1.x`(1))
     ```
     make lib # should print "Detected the OpenSSL library, setting HAVE_OPENSSL"
