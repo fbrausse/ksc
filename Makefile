@@ -36,6 +36,10 @@ ifeq ($(OS),Darwin)
 libksc.so: override LDFLAGS += -dynamiclib -install_name $(realpath $(DESTDIR)$(libdir))/libksc.so
 endif
 
+ifeq ($(OS),Linux)
+  override CLDFLAGS += -pthread
+endif
+
 ifdef GCRYPT
   CRYPT_OBJS = crypto-gcrypt.o
   test: override LDLIBS += -lgcrypt
@@ -54,7 +58,6 @@ override CPPFLAGS += \
 
 override CLDFLAGS := \
 	$(CSTD) \
-	-pthread \
 	$(OPTS) \
 	$(CLDFLAGS)
 
@@ -64,16 +67,6 @@ override CFLAGS := \
 	-Wall -Wextra \
 	$(CLDFLAGS) \
 	$(CFLAGS) \
-
-libksc.so test: override LDFLAGS := \
-	$(shell $(PKG_CONFIG) --libs-only-L --libs-only-other $(PKGS)) \
-	$(subst -L,-Xlinker -rpath -Xlinker ,$(shell $(PKG_CONFIG) --libs-only-L $(PKGS))) \
-	$(CLDFLAGS) \
-	$(LDFLAGS) \
-
-libksc.so: override LDFLAGS += -shared
-
-libksc.so test: override LDLIBS += $(shell $(PKG_CONFIG) --libs-only-l $(PKGS))
 
 COMMON_OBJS = \
 	provisioning.o \
@@ -120,22 +113,31 @@ BUILD = \
 
 all: $(BUILD)
 
-$(BUILD):
-	+$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $^ $(LDLIBS)
+$(BUILD): override LDLIBS += $(shell $(PKG_CONFIG) --libs-only-l $(PKGS))
+$(BUILD): override LDFLAGS := \
+	$(shell $(PKG_CONFIG) --libs-only-L --libs-only-other $(PKGS)) \
+	$(subst -L,-Xlinker -rpath -Xlinker ,$(shell $(PKG_CONFIG) --libs-only-L $(PKGS))) \
+	$(CLDFLAGS) \
+	$(LDFLAGS) \
 
+libksc.so: override LDFLAGS += -shared
 libksc.so: $(LIB_OBJS)
 
 test: $(OBJS)
 
+$(LIB_OBJS): pic/%.o: src/%.c Makefile protos | pic/
+
+$(OBJS): npic/%.o: src/%.c Makefile protos | npic/
+
+$(BUILD):
+	+$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $^ $(LDLIBS)
+
+$(OBJS) $(LIB_OBJS):
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c -o $@ $<
+
 npic/test.o: override CPPFLAGS += -DKSIGNAL_SERVER_CERT='"$(TS_SERVER_CERT)"'
 
 pic/%.o: override CFLAGS += -fPIC
-
-$(LIB_OBJS): pic/%.o: src/%.c Makefile protos | pic/
-	$(CC) $(CPPFLAGS) $(CFLAGS) -c -o $@ $<
-
-$(OBJS): npic/%.o: src/%.c Makefile protos | npic/
-	$(CC) $(CPPFLAGS) $(CFLAGS) -c -o $@ $<
 
 $(PROTO_SRCS): protos
 
