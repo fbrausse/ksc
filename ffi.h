@@ -37,7 +37,7 @@ int64_t  ksc_ffi_envelope_get_timestamp(struct ksc_ffi_envelope *);
 struct ksc_ffi_data;
 
 char *    ksc_ffi_data_get_body(struct ksc_ffi_data *);
-char *    ksc_ffi_data_get_group_id(struct ksc_ffi_data *);
+char *    ksc_ffi_data_get_group_id_base64(struct ksc_ffi_data *);
 /* -1 if not present */
 int64_t   ksc_ffi_data_get_timestamp(struct ksc_ffi_data *);
 
