@@ -138,4 +138,4 @@ clean:
 		test libksc.so protos \
 		$(PROTO_FILES:.proto=.pb-c.c) $(PROTO_FILES:.proto=.pb-c.h)
 
--include $(OBJS:.o=.d)
+-include $(OBJS:.o=.d) $(LIB_OBJS:.o=.d)
