@@ -30,7 +30,7 @@ static const struct ksc_log_context log_ctx = {
 #define LOG_(level,...)		LOGL_(level, h->log, __VA_ARGS__)
 #define LOG(lvl,...)		LOGL(lvl, h->log, __VA_ARGS__)
 
-static int signal_ws_send(ws_s *s, ProtobufCMessage *request_or_response)
+static int ws_send(ws_s *s, ProtobufCMessage *request_or_response)
 {
 	struct ksc_ws_connect_raw_args *h = websocket_udata_get(s);
 	Signalservice__WebSocketMessage ws_msg =
@@ -88,28 +88,28 @@ struct requested_subscription {
 	ws_s *ws;
 };
 
-static void _cancel_subscription1(void *udata)
+static void cancel_subscription1(void *udata)
 {
 	struct requested_subscription *s = udata;
 	fio_uuid_unlink(websocket_uuid(s->ws), s);
 	fio_unsubscribe(s->subs);
 }
 
-static void _cancel_subscription2(void *udata1, void *udata2)
+static void cancel_subscription2(void *udata1, void *udata2)
 {
-	_cancel_subscription1(udata1);
+	cancel_subscription1(udata1);
 	(void)udata2;
 }
 
-static int32_t _id2filter(uint64_t id) { return id ^ (id >> 32); }
+static int32_t id2filter(uint64_t id) { return id ^ (id >> 32); }
 
-static void _on_requested_message(fio_msg_s *msg)
+static void on_requested_message(fio_msg_s *msg)
 {
 	struct requested_subscription *s = msg->udata2;
-	if (msg->filter != _id2filter(s->id)) {
+	if (msg->filter != id2filter(s->id)) {
 		KSC_DEBUG(WARN, "_on_requested_message: ids don't match "
-		        "(coincidence?): _id2filter(s->id): %u, msg->filter: %u\n",
-		        _id2filter(s->id), msg->filter);
+		          "(coincidence?): _id2filter(s->id): %u, msg->filter: %u\n",
+		          id2filter(s->id), msg->filter);
 		return;
 	}
 	struct fio_str_info_s *m = &msg->msg;
@@ -128,11 +128,11 @@ static void _on_requested_message(fio_msg_s *msg)
 		.headers = resp->headers,
 	};
 	if (!s->on_response(s->ws, &r, msg->udata1))
-		fio_defer(_cancel_subscription2, s, NULL);
+		fio_defer(cancel_subscription2, s, NULL);
 	signalservice__web_socket_response_message__free_unpacked(resp, NULL);
 }
 
-static void _on_requested_unsubscribe(void *udata1, void *udata2)
+static void on_requested_unsubscribe(void *udata1, void *udata2)
 {
 	struct requested_subscription *s = udata2;
 	if (s->on_unsubscribe)
@@ -171,15 +171,15 @@ int (ksc_ws_send_request)(ws_s *s, char *verb, char *path,
 		p->on_unsubscribe = args.on_unsubscribe;
 		p->id = req.id;
 		p->ws = s;
-		p->subs = fio_subscribe(.filter = _id2filter(req.id),
+		p->subs = fio_subscribe(.filter = id2filter(req.id),
 		                        .udata1 = args.udata, .udata2 = p,
-		                        .on_message = _on_requested_message,
-		                        .on_unsubscribe = _on_requested_unsubscribe);
-		fio_uuid_link(websocket_uuid(s), p, _cancel_subscription1);
+		                        .on_message = on_requested_message,
+		                        .on_unsubscribe = on_requested_unsubscribe);
+		fio_uuid_link(websocket_uuid(s), p, cancel_subscription1);
 	}
 	req.n_headers = args.n_headers;
 	req.headers = args.headers;
-	return signal_ws_send(s, &req.base);
+	return ws_send(s, &req.base);
 }
 
 int ksc_ws_send_response(ws_s *s, int status, char *message, uint64_t *id)
@@ -193,12 +193,12 @@ int ksc_ws_send_response(ws_s *s, int status, char *message, uint64_t *id)
 	res.has_status = true;
 	res.status = status;
 	res.message = message;
-	return signal_ws_send(s, &res.base);
+	return ws_send(s, &res.base);
 }
 
-static void _on_ws_request(ws_s *s,
-                           Signalservice__WebSocketRequestMessage *request,
-                           struct ksc_ws_connect_raw_args *h)
+static void on_ws_request(ws_s *s,
+                          Signalservice__WebSocketRequestMessage *request,
+                          struct ksc_ws_connect_raw_args *h)
 {
 	if (ksc_log_prints(KSC_LOG_NOTE, h->log, &log_ctx)) {
 		LOG(NOTE, "ws request: %s %s", request->verb, request->path);
@@ -227,9 +227,9 @@ static void _on_ws_request(ws_s *s,
 		                     request->has_id ? &request->id : NULL);
 }
 
-static void _on_ws_response(ws_s *s,
-                            Signalservice__WebSocketResponseMessage *response,
-                            struct ksc_ws_connect_raw_args *h, char *scratch)
+static void on_ws_response(ws_s *s,
+                           Signalservice__WebSocketResponseMessage *response,
+                           struct ksc_ws_connect_raw_args *h, char *scratch)
 {
 	if (ksc_log_prints(KSC_LOG_NOTE, h->log, &log_ctx)) {
 		LOG(NOTE, "ws response, status: ");
@@ -250,7 +250,7 @@ static void _on_ws_response(ws_s *s,
 		size_t sz = signalservice__web_socket_response_message__pack(response, (uint8_t *)scratch);
 		fio_publish(
 			.message = { .data = scratch, .len = sz },
-			.filter = _id2filter(response->id)
+			.filter = id2filter(response->id)
 		);
 	}
 	if (h && h->handle_response)
@@ -263,7 +263,7 @@ static void _on_ws_response(ws_s *s,
 		                   h->udata);
 }
 
-static void _signal_ws_on_message(ws_s *ws, fio_str_info_s msg, uint8_t is_text)
+static void on_ws_message(ws_s *ws, fio_str_info_s msg, uint8_t is_text)
 {
 	struct ksc_ws_connect_raw_args *h = websocket_udata_get(ws);
 	LOG(DEBUG, "ws received %s message of length %zu\n",
@@ -276,11 +276,11 @@ static void _signal_ws_on_message(ws_s *ws, fio_str_info_s msg, uint8_t is_text)
 	switch (ws_msg->type) {
 	case SIGNALSERVICE__WEB_SOCKET_MESSAGE__TYPE__REQUEST:
 		assert(ws_msg->request);
-		_on_ws_request(ws, ws_msg->request, h);
+		on_ws_request(ws, ws_msg->request, h);
 		break;
 	case SIGNALSERVICE__WEB_SOCKET_MESSAGE__TYPE__RESPONSE:
 		assert(ws_msg->response);
-		_on_ws_response(ws, ws_msg->response, h, msg.data);
+		on_ws_response(ws, ws_msg->response, h, msg.data);
 		break;
 	default:
 		printf("unknown ws_msg->type: %d\n", ws_msg->type);
@@ -291,22 +291,21 @@ static void _signal_ws_on_message(ws_s *ws, fio_str_info_s msg, uint8_t is_text)
 
 #define KEEPALIVE_TIMEOUT	55	/* seconds */
 
-static void _signal_ws_keepalive(void *udata);
+static void ws_send_keepalive(void *udata);
 
-static void _signal_ws_run_timed_keepalive(ws_s *s)
+static void ws_run_timed_keepalive(ws_s *s)
 {
 	int r = fio_run_every(KEEPALIVE_TIMEOUT * 1000, 1,
-	                      _signal_ws_keepalive, s, NULL);
+	                      ws_send_keepalive, s, NULL);
 	assert(r != -1);
 }
 
-static int _signal_ws_keepalive_on_response(ws_s *s,
-                                            struct ksc_signal_response *r,
-                                            void *udata)
+static int on_ws_keepalive_response(ws_s *s,
+                                    struct ksc_signal_response *r, void *udata)
 {
 	struct ksc_ws_connect_raw_args *h = websocket_udata_get(s);
 	if (200 <= r->status && r->status < 300)
-		_signal_ws_run_timed_keepalive(s);
+		ws_run_timed_keepalive(s);
 	else
 		LOG(ERROR, "keep-alive request failed with status %u %s\n",
 		    r->status, r->message);
@@ -314,7 +313,7 @@ static int _signal_ws_keepalive_on_response(ws_s *s,
 	(void)udata;
 }
 
-static void _signal_ws_keepalive(void *udata)
+static void ws_send_keepalive(void *udata)
 {
 	ws_s *s = udata;
 	struct ksc_ws_connect_raw_args *h = websocket_udata_get(s);
@@ -322,21 +321,21 @@ static void _signal_ws_keepalive(void *udata)
 		return;
 	LOG(DEBUG, "sending keep-alive\n");
 	int r = ksc_ws_send_request(s, "GET", "/v1/keepalive",
-	                            .on_response = _signal_ws_keepalive_on_response);
+	                            .on_response = on_ws_keepalive_response);
 	if (r == -1)
 		LOG(ERROR, "sending keep-alive failed\n");
 }
 
-static void _signal_ws_on_open(ws_s *s)
+static void on_ws_open(ws_s *s)
 {
 	struct ksc_ws_connect_raw_args *h = websocket_udata_get(s);
 	LOG(DEBUG, "signal_ws_open\n");
-	_signal_ws_run_timed_keepalive(s);
+	ws_run_timed_keepalive(s);
 	if (h && h->on_open)
 		h->on_open(s, h->udata);
 }
 
-static void _signal_ws_on_shutdown(ws_s *s)
+static void on_ws_shutdown(ws_s *s)
 {
 	struct ksc_ws_connect_raw_args *h = websocket_udata_get(s);
 	LOG(DEBUG, "signal_ws_shutdown\n");
@@ -344,7 +343,7 @@ static void _signal_ws_on_shutdown(ws_s *s)
 		h->on_shutdown(s, h->udata);
 }
 
-static void _signal_ws_on_ready(ws_s *s)
+static void on_ws_ready(ws_s *s)
 {
 	struct ksc_ws_connect_raw_args *h = websocket_udata_get(s);
 	LOG(DEBUG, "signal_ws_ready\n");
@@ -352,7 +351,7 @@ static void _signal_ws_on_ready(ws_s *s)
 		h->on_ready(s, h->udata);
 }
 
-static void _signal_ws_on_close(intptr_t uuid, void *udata)
+static void on_ws_close(intptr_t uuid, void *udata)
 {
 	struct ksc_ws_connect_raw_args *h = udata;
 	LOG(NOTE, "signal ws socket closed\n");
@@ -361,7 +360,8 @@ static void _signal_ws_on_close(intptr_t uuid, void *udata)
 	ksc_free(h);
 }
 
-static void _on_websocket_http_connected(http_s *h) {
+/* these two functions are copied from facil.io */
+static void on_ws_http_connected(http_s *h) {
   websocket_settings_s *s = h->udata;
   struct ksc_ws_connect_raw_args *hh = s->udata;
   LOGL(DEBUG, hh->log, "on_websocket_http_connected\n");
@@ -381,7 +381,7 @@ static void _on_websocket_http_connected(http_s *h) {
   ksc_free(s);
 }
 
-static void _on_websocket_http_connection_finished(http_settings_s *settings) {
+static void on_ws_http_connection_finished(http_settings_s *settings) {
   websocket_settings_s *s = settings->udata;
   if (s) {
     struct ksc_ws_connect_raw_args *hh = s->udata;
@@ -410,18 +410,18 @@ intptr_t (ksc_ws_connect_raw)(const char *url, struct ksc_ws_connect_raw_args h)
 	LOGL(NOTE, h.log, "signal ws connect to %s\n", url);
 	websocket_settings_s *ws_settings = ksc_malloc(sizeof(websocket_settings_s));
 	*ws_settings = (websocket_settings_s){
-		.on_open     = _signal_ws_on_open,
-		.on_message  = _signal_ws_on_message,
-		.on_ready    = _signal_ws_on_ready,
-		.on_shutdown = _signal_ws_on_shutdown,
-		.on_close    = _signal_ws_on_close,
+		.on_open     = on_ws_open,
+		.on_message  = on_ws_message,
+		.on_ready    = on_ws_ready,
+		.on_shutdown = on_ws_shutdown,
+		.on_close    = on_ws_close,
 		.udata       = ksc_memdup(&h, sizeof(h)),
 	};
 	fio_tls_s *tls = ksc_signal_tls(h.server_cert_path);
 	intptr_t r = http_connect(url, NULL,
-	                     .on_request = _on_websocket_http_connected,
-	                     .on_response = _on_websocket_http_connected,
-	                     .on_finish = _on_websocket_http_connection_finished,
+	                     .on_request = on_ws_http_connected,
+	                     .on_response = on_ws_http_connected,
+	                     .on_finish = on_ws_http_connection_finished,
 	                     .udata = ws_settings, .tls = tls);
 	fio_tls_destroy(tls);
 	return r;
