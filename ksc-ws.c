@@ -115,6 +115,7 @@ static inline size_t unref(struct ref_counted *ref)
 
 #define REF_COUNTED	struct ref_counted ref_counted
 #define REF_INIT(ptr,v)	atomic_init(&(ptr)->ref_counted.cnt, (v))
+/* only use directly when you know what you're doing: no destructor invoked */
 #define REF(ptr)	ref(&(ptr)->ref_counted)
 #define UNREF(ptr)	unref(&(ptr)->ref_counted)
 
@@ -130,7 +131,23 @@ struct ksc_ws {
 	pthread_mutex_t signal_mtx;
 };
 
-static void ksignal_ctx_destroy(struct ksc_ws *ksc);
+static inline void ksignal_ctx_ref(struct ksc_ws *ksc)
+{
+	REF(ksc);
+}
+
+static void ksignal_ctx_unref(struct ksc_ws *ksc)
+{
+	if (UNREF(ksc))
+		return;
+	LOG(DEBUG, "destroying ksc_ws\n");
+	assert(!ksc->ref_counted.cnt);
+	signal_protocol_store_context_destroy(ksc->psctx);
+	signal_context_destroy(ksc->ctx);
+	ksc_free(ksc->url);
+	pthread_mutex_destroy(&ksc->signal_mtx);
+	ksc_free(ksc);
+}
 
 intptr_t ksc_ws_get_uuid(const struct ksc_ws *kws)
 {
@@ -356,7 +373,7 @@ static int handle_request(ws_s *ws, char *verb, char *path, uint64_t *id,
 		if (ksc_log_prints(KSC_LOG_NOTE, ksc->args.log, &log_ctx)) {
 			int fd = (ksc->args.log ? ksc->args.log : &KSC_DEFAULT_LOG)->fd;
 			ksc_print_envelope(e, fd,
-			                   ksc_log_prints(KSC_LOG_DEBUG, ksc->args.log, &log_ctx));
+				ksc_log_prints(KSC_LOG_DEBUG, ksc->args.log, &log_ctx));
 		}
 		r = received_envelope(ws, e, ksc) ? 1 : -3;
 		LOG(DEBUG, "handle_request for PUT /api/v1/message returning %d\n", r);
@@ -372,7 +389,7 @@ static int handle_request(ws_s *ws, char *verb, char *path, uint64_t *id,
 }
 
 struct send_message_data {
-	const struct ksc_ws *ksc;
+	struct ksc_ws *ksc;
 	/* 0: to unsubscribe, other to stay subscribed */
 	int (*on_response)(ws_s *ws, struct ksc_signal_response *response,
 	                   void *udata);
@@ -391,8 +408,14 @@ static int on_send_message_response(ws_s *ws,
 	int r = 0;
 	if (data->on_response)
 		r = data->on_response(ws, response, data->udata);
-	ksc_free(data);
 	return r;
+}
+
+static void on_send_message_unsubscribe(void *udata)
+{
+	struct send_message_data *data = udata;
+	ksignal_ctx_unref(data->ksc);
+	ksc_free(data);
 }
 
 static FIOBJ get(FIOBJ v, const char *key, size_t len)
@@ -545,7 +568,7 @@ struct prekey_request_data {
 };
 
 static int send_message_final(const char *recipient, size_t recipient_len,
-                              const struct ksc_ws *ksc,
+                              struct ksc_ws *ksc,
                               int32_t *devices, size_t n_devices,
                               struct send_message_data2 data);
 
@@ -582,7 +605,8 @@ static ssize_t known_target_devices(int32_t **devices, const char *recipient,
 	size_t n = signal_int_list_size(sessions);
 	bool contains_default_device = false;
 	for (size_t i=0; !contains_default_device && i<n; i++)
-		contains_default_device |= signal_int_list_at(sessions, i) == DEFAULT_DEVICE_ID;
+		contains_default_device |=
+			signal_int_list_at(sessions, i) == DEFAULT_DEVICE_ID;
 	devs = malloc(sizeof(*devs) * (n + !contains_default_device));
 	if (!devs) {
 		r = SG_ERR_NOMEM;
@@ -617,7 +641,7 @@ static void on_prekey_response(http_s *h)
 	    h->status, pr->requested, h->udata, (void *)s, s->udata);
 	KSC_DEBUG(DEBUG, "  path: %s\n", fiobj_obj2cstr(h->path).data);
 	s->udata = pr; /* why is this necessary? bug in facil.io? */
-	const struct ksc_ws *ksc = pr->ksc;
+	struct ksc_ws *ksc = pr->ksc;
 	if (pr->requested) {
 		int r = -1;
 		if (200 <= h->status && h->status < 300) {
@@ -639,11 +663,14 @@ static void on_prekey_response(http_s *h)
 			int32_t *devices = NULL;
 			ssize_t n = r;
 			if (!r)
-				n = known_target_devices(&devices, pr->name, pr->name_len, ksc);
+				n = known_target_devices(&devices, pr->name,
+				                         pr->name_len, ksc);
 			if (n < 0)
 				r = n;
 			if (!r) {
-				r = send_message_final(pr->name, pr->name_len, ksc, devices, n, pr->data);
+				r = send_message_final(pr->name, pr->name_len,
+				                       ksc, devices, n,
+				                       pr->data);
 				LOGr(r, "send_message_final() -> %d\n", r);
 			}
 		}
@@ -672,10 +699,7 @@ static void on_prekey_finish(http_settings_s *s)
 	LOG(DEBUG, "on_prekey_finish()\n");
 	free(pr->name);
 	free(pr->device_ids);
-	if (!UNREF(ksc)) {
-		KSC_DEBUG(INFO, "destroying ksc_ws\n");
-		ksignal_ctx_destroy(ksc);
-	}
+	ksignal_ctx_unref(ksc);
 	free(pr);
 }
 
@@ -709,7 +733,7 @@ static intptr_t get_pre_keys(const char *recipient, size_t recipient_len,
 	          : ksc_ckprintf("https://" KSC_SERVICE_HOST PREKEY_DEVICE_PATH,
 	                         (int)recipient_len, recipient,
 	                         device_ids[0]);
-	REF(ksc);
+	ksignal_ctx_ref(ksc);
 	struct prekey_request_data pr = {
 		.name = ksc_memdup(recipient, recipient_len),
 		.name_len = recipient_len,
@@ -812,7 +836,7 @@ done:
 #define CSTR2FIOBJ(const_str)	fiobj_str_new(const_str, sizeof(const_str)-1)
 
 static int send_message_final(const char *recipient, size_t recipient_len,
-                              const struct ksc_ws *ksc,
+                              struct ksc_ws *ksc,
                               int32_t *devices, size_t n_devices,
                               struct send_message_data2 data)
 {
@@ -879,6 +903,7 @@ static int send_message_final(const char *recipient, size_t recipient_len,
 		.on_response = data.args.on_response,
 		.udata = data.args.udata,
 	};
+	ksignal_ctx_ref(ksc);
 
 	static char *headers[] = {
 		"Content-Type: application/json",
@@ -889,6 +914,7 @@ static int send_message_final(const char *recipient, size_t recipient_len,
 	                        .headers = headers,
 	                        .n_headers = ARRAY_SIZE(headers),
 	                        .on_response = on_send_message_response,
+	                        .on_unsubscribe = on_send_message_unsubscribe,
 	                        .udata = ksc_memdup(&cb_data, sizeof(cb_data)));
 
 	fiobj_free(json);
@@ -1000,18 +1026,6 @@ done:
 }
 
 
-static void ksignal_ctx_destroy(struct ksc_ws *ksc)
-{
-	assert(!ksc->ref_counted.cnt);
-	if (ksc->psctx)
-		signal_protocol_store_context_destroy(ksc->psctx);
-	if (ksc->ctx)
-		signal_context_destroy(ksc->ctx);
-	ksc_free(ksc->url);
-	pthread_mutex_destroy(&ksc->signal_mtx);
-	ksc_free(ksc);
-}
-
 static void ctx_log(int level, const char *message, size_t len, void *user_data)
 {
 	struct ksc_ws *ksc = user_data;
@@ -1041,7 +1055,7 @@ static void ctx_lock(void *user_data)
 {
 	struct ksc_ws *ksc = user_data;
 	LOG(DEBUG, "ctx_lock()\n");
-	REF(ksc);
+	ksignal_ctx_ref(ksc);
 	int r = pthread_mutex_lock(&ksc->signal_mtx);
 	assert(!r);
 	(void)r;
@@ -1053,7 +1067,7 @@ static void ctx_unlock(void *user_data)
 	LOG(DEBUG, "ctx unlock()\n");
 	int r = pthread_mutex_unlock(&ksc->signal_mtx);
 	assert(!r);
-	UNREF(ksc);
+	ksignal_ctx_unref(ksc);
 	(void)r;
 }
 
@@ -1064,7 +1078,7 @@ static struct ksc_ws * ksignal_ctx_create(struct json_store *js,
 
 	ksc = ksc_calloc(1, sizeof(*ksc));
 	REF_INIT(ksc, 0);
-	REF(ksc);
+	ksignal_ctx_ref(ksc);
 
 	pthread_mutexattr_t attr;
 	pthread_mutexattr_init(&attr);
@@ -1105,7 +1119,7 @@ static struct ksc_ws * ksignal_ctx_create(struct json_store *js,
 	return ksc;
 
 fail:
-	ksignal_ctx_destroy(ksc);
+	ksignal_ctx_unref(ksc);
 	return NULL;
 }
 
@@ -1138,10 +1152,7 @@ static void on_close(intptr_t uuid, void *udata)
 	}
 	if (ksc->args.on_close)
 		ksc->args.on_close(uuid, ksc->args.udata);
-	if (!UNREF(ksc)) {
-		KSC_DEBUG(INFO, "destroying ksc_ws\n");
-		ksignal_ctx_destroy(ksc);
-	}
+	ksignal_ctx_unref(ksc);
 }
 
 static void on_shutdown(ws_s *s, void *udata)
