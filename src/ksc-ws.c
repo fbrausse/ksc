@@ -357,6 +357,10 @@ static int handle_request(ws_s *ws, char *verb, char *path, uint64_t *id,
 		const char *sg_key_b64 =
 			json_store_get_signaling_key_base64(ksc->js,
 			                                    &sg_key_b64_len);
+		if (!sg_key_b64) {
+			LOG(ERROR, "unable retrieve signaling key from JSON store\n");
+			return -1;
+		}
 		if (is_enc && !ksc_decrypt_envelope(&body, &size,
 		                                    sg_key_b64,
 		                                    sg_key_b64_len)) {
