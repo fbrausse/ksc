@@ -18,7 +18,7 @@ branch at the linked URL if not specified otherwise):
   - facil.io (branch `0.7.x`): https://github.com/fbrausse/facil.io
     including TLS support (requires `openssl-1.1.x`(1))
     ```
-    make static-libs # should print "Detected the OpenSSL library, setting HAVE_OPENSSL"
+    make lib # should print "Detected the OpenSSL library, setting HAVE_OPENSSL"
     ```
   - kjson: https://github.com/fbrausse/kjson
     ```
