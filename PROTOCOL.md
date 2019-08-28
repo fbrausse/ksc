@@ -1,3 +1,29 @@
+Signal Serivce HTTPS API
+========================
+
+Conventions
+-----------
+- '<-': client to server
+- '->': server to client
+
+Connections to text-secure.whispersystems.org
+---------------------------------------------
+- HTTPS with a pinned self-signed certificate available PEM-encoded in the file
+  'whisper.store.asn1'.
+
+Requests
+--------
+- Authorization: Basic AUTH
+  - AUTH is the base64-encoded string NUMBER:B64PWD where B64PWD is the
+    base64-encoded password from the config file. Yes, that's right, double
+    base64 encoding.
+
+<- GET /v2/keys/NUMBER/DEV-SPEC
+-------------------------------
+Retrieves pre-key bundles for devices registered under NUMBER.
+- If DEV-SPEC is '*' retrieves pre-key bundles for all devices, otherwise
+  DEV-SPEC should be a positive integer device-ID.
+
 Signal Service Websocket API
 ============================
 
