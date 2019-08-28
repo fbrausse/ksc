@@ -1011,13 +1011,13 @@ int (ksc_ws_send_message)(ws_s *ws, struct ksc_ws *ksc, const char *recipient,
 		*a++ = *b;
 	}
 	size_t gn = a - get_prekeys_for;
-	signal_unlock(ksc->ctx);
 	if (r < 0)
 		goto done;
 
 	struct send_message_data2 data2 = {
 		ws, data.timestamp, args, content_packed, content_sz,
 	};
+	content_packed = NULL; /* transferred ownership */
 	if (gn) {
 		intptr_t sock = get_pre_keys(recipient, recipient_len,
 		                             get_prekeys_for, gn, ksc, data2);
@@ -1033,8 +1033,10 @@ int (ksc_ws_send_message)(ws_s *ws, struct ksc_ws *ksc, const char *recipient,
 	}
 
 done:
-	free(devs);
-	free(get_prekeys_for);
+	signal_unlock(ksc->ctx);
+	ksc_free(content_packed);
+	ksc_free(devs);
+	ksc_free(get_prekeys_for);
 	return r;
 }
 
