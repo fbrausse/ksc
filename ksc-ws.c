@@ -391,10 +391,10 @@ static ec_public_key * str2ec_public_key(FIOBJ s, const struct ksc_ws *ksc)
 	return key;
 }
 
-static int handle_hash_pk_bundle_device(FIOBJ device, const char *name,
-                                        size_t name_len,
-                                        const struct ksc_ws *ksc,
-                                        ec_public_key *identity_key)
+static int process_hash_pk_bundle_device(FIOBJ device, const char *name,
+                                         size_t name_len,
+                                         const struct ksc_ws *ksc,
+                                         ec_public_key *identity_key)
 {
 	FIOBJ device_id = GET(device, "deviceId");
 	FIOBJ registration_id = GET(device, "registrationId");
@@ -465,11 +465,10 @@ skip:
 	return r;
 }
 
-static int handle_hash_pk_bundle(FIOBJ response, const char *name,
-                                 size_t name_len, const struct ksc_ws *ksc)
+static int process_hash_pk_bundle(FIOBJ response, const char *name,
+                                  size_t name_len, const struct ksc_ws *ksc)
 {
 	ec_public_key *identity_key = NULL;
-	FIOBJ devices = GET(response, "devices");
 
 	identity_key = str2ec_public_key(GET(response, "identityKey"), ksc);
 	LOGr(!identity_key, "decoding pre-key identity key\n");
@@ -477,10 +476,10 @@ static int handle_hash_pk_bundle(FIOBJ response, const char *name,
 		return 1;
 
 	int r = 0;
-	while (fiobj_ary_count(devices)) {
+	for (FIOBJ devices = GET(response, "devices"); fiobj_ary_count(devices);) {
 		FIOBJ device = fiobj_ary_pop(devices);
-		r |= handle_hash_pk_bundle_device(device, name, name_len, ksc,
-		                                  identity_key) != 0;
+		r |= process_hash_pk_bundle_device(device, name, name_len, ksc,
+		                                   identity_key) != 0;
 		fiobj_free(device);
 	}
 
@@ -529,7 +528,8 @@ static void on_prekey_response(http_s *h)
 			FIOBJ response;
 			fio_str_info_s s = fiobj_obj2cstr(h->body);
 			if (s.len && fiobj_json2obj(&response, s.data, s.len)) {
-				r = handle_hash_pk_bundle(response, pr->name, pr->name_len, ksc);
+				r = process_hash_pk_bundle(response, pr->name,
+				                           pr->name_len, ksc);
 				LOGr(r, "handle_hash_pk_bundle() -> %d\n", r);
 				fiobj_free(response);
 			} else {
@@ -723,31 +723,34 @@ static int send_message_final(const char *recipient, size_t recipient_len,
 	signal_unlock(ksc->ctx);
 	struct outgoing_push_message *message_list = NULL, **message_tail = &message_list;
 
-	if (!myself || my_device_id != DEFAULT_DEVICE_ID /* || unidentifiedAccess */) {
+	struct signal_protocol_address addr = {
+		recipient,
+		recipient_len,
+		DEFAULT_DEVICE_ID,
+	};
+
+	if (!myself || my_device_id != addr.device_id /* || unidentifiedAccess */) {
 		/* encrypt for (target->name, DEFAULT_DEVICE_ID) */
-		r = encrypt_for(&(struct signal_protocol_address){
-			.name = recipient,
-			.name_len = recipient_len,
-			.device_id = DEFAULT_DEVICE_ID,
-		}, ksc, data.content_packed, data.content_sz, message_tail);
+		r = encrypt_for(&addr, ksc, data.content_packed,
+		                data.content_sz, message_tail);
 		LOGr(r, "encrypt_for default device -> %d\n", r);
-		message_tail = &(*message_tail)->next;
+		if (!r)
+			message_tail = &(*message_tail)->next;
+		if (r == SG_ERR_NO_SESSION)
+			r = 0;
 		if (r)
 			goto done;
 	}
 	for (unsigned i=0; i<signal_int_list_size(sessions); i++) {
-		int device_id = signal_int_list_at(sessions, i);
-		struct signal_protocol_address addr = {
-			.name = recipient,
-			.name_len = recipient_len,
-			.device_id = device_id,
-		};
-		if ((!myself || device_id != my_device_id) &&
-		    signal_protocol_session_contains_session(ksc->psctx, &addr)) {
+		addr.device_id = signal_int_list_at(sessions, i);
+		if (!myself || addr.device_id != my_device_id) {
 			r = encrypt_for(&addr, ksc, data.content_packed,
 			                data.content_sz, message_tail);
-			LOGr(r, "encrypt_for device %d -> %d\n", device_id, r);
-			message_tail = &(*message_tail)->next;
+			LOGr(r, "encrypt_for device %d -> %d\n", addr.device_id, r);
+			if (!r)
+				message_tail = &(*message_tail)->next;
+			if (r == SG_ERR_NO_SESSION)
+				r = 0;
 			if (r)
 				goto done;
 		}
@@ -864,43 +867,39 @@ int (ksc_ws_send_message)(ws_s *ws, const struct ksc_ws *ksc,
 	int r = 0;
 	size_t recipient_len = strlen(recipient);
 
-	bool any_device = false;
-	bool single_device = false;
-	int32_t single_device_id;
-
 	signal_int_list *sessions = NULL;
 	r = signal_protocol_session_get_sub_device_sessions(ksc->psctx,
 	                                                    &sessions,
 	                                                    recipient,
 	                                                    recipient_len);
 	LOGr(r < 0, "signal_protocol_session_get_sub_device_sessions -> %d\n", r);
-	signal_unlock(ksc->ctx);
+
+	struct signal_protocol_address addr = {
+		recipient,
+		recipient_len,
+		DEFAULT_DEVICE_ID
+	};
+
+	bool any_device = false;
+	bool single_device = true;
+	int32_t single_device_id = DEFAULT_DEVICE_ID;
 
 	if (!myself || my_device_id != DEFAULT_DEVICE_ID)
-		if (!signal_protocol_session_contains_session(ksc->psctx, &(struct signal_protocol_address){
-			.name = recipient,
-			.name_len = recipient_len,
-			.device_id = DEFAULT_DEVICE_ID,
-		})) {
+		if (!signal_protocol_session_contains_session(ksc->psctx, &addr))
 			any_device = true;
-			single_device = true;
-			single_device_id = DEFAULT_DEVICE_ID;
-		}
 
 	for (unsigned i=0; i<signal_int_list_size(sessions); i++) {
-		int device_id = signal_int_list_at(sessions, i);
-		if (!signal_protocol_session_contains_session(ksc->psctx, &(struct signal_protocol_address){
-			.name = recipient,
-			.name_len = recipient_len,
-			.device_id = device_id,
-		})) {
-			if (single_device)
-				single_device &= single_device_id == device_id;
-			single_device_id = device_id;
+		addr.device_id = signal_int_list_at(sessions, i);
+		if ((!myself || addr.device_id != my_device_id) &&
+		    !signal_protocol_session_contains_session(ksc->psctx, &addr)) {
 			any_device = true;
+			if (single_device)
+				single_device &= single_device_id == addr.device_id;
+			single_device_id = addr.device_id;
 		}
 	}
 	signal_int_list_free(sessions);
+	signal_unlock(ksc->ctx);
 
 	struct send_message_data2 data2 = {
 		ws, data.timestamp, args, content_packed, content_sz,
