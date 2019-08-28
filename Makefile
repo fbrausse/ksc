@@ -90,9 +90,10 @@ LIB_OBJS = $(addprefix pic/,\
 	$(COMMON_OBJS) \
 )
 
-OBJS = \
+OBJS = $(addprefix npic/,\
 	test.o \
 	$(COMMON_OBJS) \
+)
 
 SERVICE_PROTO_FILES = \
 	WebSocketResources.proto \
@@ -106,36 +107,46 @@ PROTO_FILES = \
 	$(SERVICE_PROTO_FILES) \
 	$(LOCAL_PROTO_FILES) \
 
+PROTO_SRCS = $(addprefix src/,\
+	$(PROTO_FILES:.proto=.pb-c.c) \
+	$(PROTO_FILES:.proto=.pb-c.h) \
+)
+
+BUILD = \
+	test \
+	libksc.so \
+
 .PHONY: all clean
 
-all: test libksc.so
+all: $(BUILD)
+
+$(BUILD):
+	+$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $^ $(LDLIBS)
 
 libksc.so: $(LIB_OBJS)
-	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $^ $(LDLIBS)
 
 test: $(OBJS)
 
-$(OBJS): %.o: %.c Makefile protos
-
-test.o: override CPPFLAGS += -DKSIGNAL_SERVER_CERT='"$(TS_SERVER_CERT)"'
-
-$(PROTO_FILES:.proto=.pb-c.c) \
-$(PROTO_FILES:.proto=.pb-c.h): protos
-
-protos: $(addprefix $(SERVICE_PROTO_PATH)/,$(SERVICE_PROTO_FILES)) $(LOCAL_PROTO_FILES)
-	$(PROTOC_C) --c_out=. --proto_path=$(SERVICE_PROTO_PATH) --proto_path=. $(PROTO_FILES) && touch $@
+npic/test.o: override CPPFLAGS += -DKSIGNAL_SERVER_CERT='"$(TS_SERVER_CERT)"'
 
 pic/%.o: override CFLAGS += -fPIC
 
-$(LIB_OBJS): pic/%.o: %.c Makefile protos | pic/
+$(LIB_OBJS): pic/%.o: src/%.c Makefile protos | pic/
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c -o $@ $<
+
+$(OBJS): npic/%.o: src/%.c Makefile protos | npic/
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c -o $@ $<
+
+$(PROTO_SRCS): protos
+
+protos: $(addprefix $(SERVICE_PROTO_PATH)/,$(SERVICE_PROTO_FILES)) $(LOCAL_PROTO_FILES)
+	$(PROTOC_C) --c_out=src/ --proto_path=$(SERVICE_PROTO_PATH) --proto_path=. $(PROTO_FILES) && touch $@
 
 %/:
 	mkdir -p $@
 
 clean:
 	$(RM) $(OBJS) $(OBJS:.o=.d) $(LIB_OBJS) $(LIB_OBJS:.o=.d) \
-		test libksc.so protos \
-		$(PROTO_FILES:.proto=.pb-c.c) $(PROTO_FILES:.proto=.pb-c.h)
+		$(BUILD) protos $(PROTO_SRCS)
 
 -include $(OBJS:.o=.d) $(LIB_OBJS:.o=.d)
