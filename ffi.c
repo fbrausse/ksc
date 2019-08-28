@@ -102,7 +102,7 @@ int64_t   ksc_ffi_data_get_timestamp(struct ksc_ffi_data *d)
 struct ksc_ffi {
 	ws_s *ws;
 	struct json_store *js;
-	const struct ksc_ws *kws;
+	struct ksc_ws *kws;
 	struct ksc_log *log;
 	pthread_t thread;
 	int (*on_receipt)(const struct ksc_ffi *,
@@ -120,7 +120,7 @@ void * ksc_ffi_get_udata(struct ksc_ffi *ffi)
 	return ffi->udata;
 }
 
-static bool ffi_on_receipt(ws_s *ws, const struct ksc_ws *kws,
+static bool ffi_on_receipt(ws_s *ws, struct ksc_ws *kws,
                            const Signalservice__Envelope *e)
 {
 	struct ksc_ffi *ffi = ksc_ws_get_udata(kws);
@@ -132,7 +132,7 @@ static bool ffi_on_receipt(ws_s *ws, const struct ksc_ws *kws,
 	(void)ws;
 }
 
-static bool ffi_on_content(ws_s *ws, const struct ksc_ws *kws,
+static bool ffi_on_content(ws_s *ws, struct ksc_ws *kws,
                            const Signalservice__Envelope *e,
                            const Signalservice__Content *c)
 {
@@ -149,7 +149,7 @@ static bool ffi_on_content(ws_s *ws, const struct ksc_ws *kws,
 	(void)ws;
 }
 
-static void ffi_on_open(ws_s *ws, const struct ksc_ws *kws)
+static void ffi_on_open(ws_s *ws, struct ksc_ws *kws)
 {
 	struct ksc_ffi *ffi = ksc_ws_get_udata(kws);
 	ffi->ws = ws;
@@ -209,7 +209,7 @@ struct ksc_ffi * ksc_ffi_start(const char *json_store_path,
 		goto error;
 	ffi->log = ksc_memdup(ffi->log ? ffi->log : &KSC_DEFAULT_LOG,
 	                      sizeof(*ffi->log));
-	const struct ksc_ws *kws = ksc_ws_connect_service(ffi->js,
+	struct ksc_ws *kws = ksc_ws_connect_service(ffi->js,
 		.on_receipt = ffi_on_receipt,
 		.on_content = ffi_on_content,
 		.on_open = ffi_on_open,

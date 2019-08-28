@@ -34,19 +34,19 @@ struct ksc_ws_send_message_args {
 	void *udata;
 };
 
-int ksc_ws_send_message(ws_s *ws, const struct ksc_ws *kws, const char *recipient,
+int ksc_ws_send_message(ws_s *ws, struct ksc_ws *kws, const char *recipient,
                         struct ksc_ws_send_message_args args);
 #define ksc_ws_send_message(ws, kws, target, ...) \
 	ksc_ws_send_message(ws, kws, target, \
 	                    (struct ksc_ws_send_message_args){ __VA_ARGS__ });
 
 struct ksc_ws_connect_service_args {
-	bool (*on_receipt)(ws_s *, const struct ksc_ws *,
+	bool (*on_receipt)(ws_s *, struct ksc_ws *,
 	                   const Signalservice__Envelope *e);
-	bool (*on_content)(ws_s *, const struct ksc_ws *,
+	bool (*on_content)(ws_s *, struct ksc_ws *,
 	                   const Signalservice__Envelope *e,
 	                   const Signalservice__Content *c);
-	void (*on_open)(ws_s *, const struct ksc_ws *);
+	void (*on_open)(ws_s *, struct ksc_ws *);
 	void (*on_close)(intptr_t uuid, void *udata);
 	struct ksc_log_context signal_log_ctx;
 	struct ksc_log *log;
@@ -63,8 +63,8 @@ void ksc_print_envelope(const Signalservice__Envelope *e, int fd, bool detail);
  * remains valid until this socket is closed. It is free'd on close of this
  * socket. Success does not mean the connection has been established yet, use
  * the .on_open callback to determine that. */
-const struct ksc_ws * ksc_ws_connect_service(struct json_store *js,
-                                             struct ksc_ws_connect_service_args args);
+struct ksc_ws * ksc_ws_connect_service(struct json_store *js,
+                                       struct ksc_ws_connect_service_args args);
 #define ksc_ws_connect_service(js, ...) \
 	ksc_ws_connect_service((js), \
 	                       (struct ksc_ws_connect_service_args){ __VA_ARGS__ })

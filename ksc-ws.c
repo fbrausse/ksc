@@ -7,8 +7,14 @@
  * See the LICENSE file for terms of distribution.
  */
 
+#ifdef __STDC_NO_ATOMICS__
+# error Need _Atomic support from C11
+#endif
+
 #include "ksc-ws.h"
 #include "crypto.h"
+
+#include <stdatomic.h>
 
 #include <pthread.h>
 
@@ -91,7 +97,29 @@ void ksc_print_envelope(const Signalservice__Envelope *e, int fd, bool detail)
 	}
 }
 
+struct ref_counted {
+	_Atomic size_t cnt;
+};
+
+static inline struct ref_counted * ref(struct ref_counted *ref)
+{
+	ref->cnt++;
+	return ref;
+}
+
+static inline size_t unref(struct ref_counted *ref)
+{
+	assert(ref->cnt);
+	return --ref->cnt;
+}
+
+#define REF_COUNTED	struct ref_counted ref_counted
+#define REF_INIT(ptr,v)	atomic_init(&(ptr)->ref_counted.cnt, (v))
+#define REF(ptr)	ref(&(ptr)->ref_counted)
+#define UNREF(ptr)	unref(&(ptr)->ref_counted)
+
 struct ksc_ws {
+	REF_COUNTED;
 	struct json_store *js;
 	signal_context *ctx;
 	signal_protocol_store_context *psctx;
@@ -101,6 +129,8 @@ struct ksc_ws {
 	bool reconnecting_during_close;
 	pthread_mutex_t signal_mtx;
 };
+
+static void ksignal_ctx_destroy(struct ksc_ws *ksc);
 
 intptr_t ksc_ws_get_uuid(const struct ksc_ws *kws)
 {
@@ -506,7 +536,7 @@ struct prekey_request_data {
 	size_t name_len;
 	int32_t *device_ids;
 	size_t n_device_ids;
-	const struct ksc_ws *ksc;
+	struct ksc_ws *ksc;
 	bool requested;
 	bool received;
 	FIOBJ auth;
@@ -629,17 +659,23 @@ static void on_prekey_response(http_s *h)
 		pr->requested = true;
 		http_set_header(h, fiobj_str_new("Authorization", 13), pr->auth);
 		http_send_body(h, NULL, 0);
-	} else
+	} else {
+		LOG(DEBUG, "sending http_finish()\n");
 		http_finish(h);
+	}
 }
 
 static void on_prekey_finish(http_settings_s *s)
 {
 	struct prekey_request_data *pr = s->udata;
-	const struct ksc_ws *ksc = pr->ksc;
+	struct ksc_ws *ksc = pr->ksc;
 	LOG(DEBUG, "on_prekey_finish()\n");
 	free(pr->name);
 	free(pr->device_ids);
+	if (!UNREF(ksc)) {
+		KSC_DEBUG(INFO, "destroying ksc_ws\n");
+		ksignal_ctx_destroy(ksc);
+	}
 	free(pr);
 }
 
@@ -648,7 +684,7 @@ static void on_prekey_finish(http_settings_s *s)
 
 static intptr_t get_pre_keys(const char *recipient, size_t recipient_len,
                              int32_t *device_ids, size_t n_device_ids,
-                             const struct ksc_ws *ksc,
+                             struct ksc_ws *ksc,
                              struct send_message_data2 data2)
 {
 	/* get pre-keys via PushServiceSocket, aka standard HTTPS request */
@@ -673,6 +709,7 @@ static intptr_t get_pre_keys(const char *recipient, size_t recipient_len,
 	          : ksc_ckprintf("https://" KSC_SERVICE_HOST PREKEY_DEVICE_PATH,
 	                         (int)recipient_len, recipient,
 	                         device_ids[0]);
+	REF(ksc);
 	struct prekey_request_data pr = {
 		.name = ksc_memdup(recipient, recipient_len),
 		.name_len = recipient_len,
@@ -811,7 +848,7 @@ static int send_message_final(const char *recipient, size_t recipient_len,
 
 	ksc_free(data.content_packed);
 
-	char *path = ksc_ckprintf("/v1/messages/%s", recipient);
+	char *path = ksc_ckprintf("/v1/messages/%.*s", (int)recipient_len, recipient);
 
 	FIOBJ msg = fiobj_hash_new();
 	fiobj_hash_set(msg, CSTR2FIOBJ("destination"),
@@ -885,8 +922,7 @@ done:
 
 #define PADDING			160
 
-int (ksc_ws_send_message)(ws_s *ws, const struct ksc_ws *ksc,
-                          const char *recipient,
+int (ksc_ws_send_message)(ws_s *ws, struct ksc_ws *ksc, const char *recipient,
                           struct ksc_ws_send_message_args args)
 {
 	Signalservice__DataMessage data = SIGNALSERVICE__DATA_MESSAGE__INIT;
@@ -966,6 +1002,7 @@ done:
 
 static void ksignal_ctx_destroy(struct ksc_ws *ksc)
 {
+	assert(!ksc->ref_counted.cnt);
 	if (ksc->psctx)
 		signal_protocol_store_context_destroy(ksc->psctx);
 	if (ksc->ctx)
@@ -1004,6 +1041,7 @@ static void ctx_lock(void *user_data)
 {
 	struct ksc_ws *ksc = user_data;
 	LOG(DEBUG, "ctx_lock()\n");
+	REF(ksc);
 	int r = pthread_mutex_lock(&ksc->signal_mtx);
 	assert(!r);
 	(void)r;
@@ -1015,6 +1053,7 @@ static void ctx_unlock(void *user_data)
 	LOG(DEBUG, "ctx unlock()\n");
 	int r = pthread_mutex_unlock(&ksc->signal_mtx);
 	assert(!r);
+	UNREF(ksc);
 	(void)r;
 }
 
@@ -1024,6 +1063,8 @@ static struct ksc_ws * ksignal_ctx_create(struct json_store *js,
 	struct ksc_ws *ksc = NULL;
 
 	ksc = ksc_calloc(1, sizeof(*ksc));
+	REF_INIT(ksc, 0);
+	REF(ksc);
 
 	pthread_mutexattr_t attr;
 	pthread_mutexattr_init(&attr);
@@ -1097,7 +1138,10 @@ static void on_close(intptr_t uuid, void *udata)
 	}
 	if (ksc->args.on_close)
 		ksc->args.on_close(uuid, ksc->args.udata);
-	ksignal_ctx_destroy(ksc);
+	if (!UNREF(ksc)) {
+		KSC_DEBUG(INFO, "destroying ksc_ws\n");
+		ksignal_ctx_destroy(ksc);
+	}
 }
 
 static void on_shutdown(ws_s *s, void *udata)
@@ -1107,8 +1151,8 @@ static void on_shutdown(ws_s *s, void *udata)
 	(void)s;
 }
 
-const struct ksc_ws * (ksc_ws_connect_service)(struct json_store *js,
-                                               struct ksc_ws_connect_service_args args)
+struct ksc_ws * (ksc_ws_connect_service)(struct json_store *js,
+                                         struct ksc_ws_connect_service_args args)
 {
 	struct ksc_ws *ksc = ksignal_ctx_create(js, args.log);
 	if (!ksc) {

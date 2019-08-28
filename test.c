@@ -204,7 +204,7 @@ static int recv_messages(ws_s *ws, struct ksc_signal_response *r, void *udata)
 	(void)ws;
 }
 
-static void send_get_profile(ws_s *s, const struct ksc_ws *kws)
+static void send_get_profile(ws_s *s, struct ksc_ws *kws)
 {
 	struct ksc_ctx *ksc = ksc_ws_get_udata(kws);
 	LOG(INFO, "connected\n");
@@ -238,7 +238,7 @@ static void send_get_profile(ws_s *s, const struct ksc_ws *kws)
 #endif
 }
 
-static bool on_content(ws_s *ws, const struct ksc_ws *kws,
+static bool on_content(ws_s *ws, struct ksc_ws *kws,
                        const Signalservice__Envelope *e,
                        const Signalservice__Content *c)
 {
@@ -391,7 +391,7 @@ int main(int argc, char **argv)
 		                           .on_close = on_close_do_stop,
 		                           .udata = &ctx) < 0;
 	} else if (password) {
-		const struct ksc_ws *kws = ksc_ws_connect_service(js,
+		struct ksc_ws *kws = ksc_ws_connect_service(js,
 			.on_content = on_content,
 			.on_open = send_get_profile,
 			.on_close = on_close_do_stop,
