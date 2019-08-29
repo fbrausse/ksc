@@ -12,8 +12,12 @@ branch at the linked URL if not specified otherwise):
     ```
     mkdir build
     cd build
-    cmake -DCMAKE_INSTALL_PREFIX=/some/prefix/path ..
+    cmake -DCMAKE_POSITION_INDEPENDENT_CODE=1 -DCMAKE_INSTALL_PREFIX=/some/prefix/path ..
     make install
+    ```
+    Pass `-DCMAKE_POSITION_INDEPENDENT_CODE=1` if you get linker errors like
+    ```
+    libsignal-protocol-c.a(gen_veddsa.c.o): relocation R_X86_64_PC32 against symbol `B_bytes' can not be used when making a shared object; recompile with -fPIC
     ```
   - facil.io (branch `0.7.x`): https://github.com/boazsegev/facil.io
     including TLS support (requires `openssl-1.1.x`(1))
