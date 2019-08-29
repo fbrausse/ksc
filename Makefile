@@ -24,7 +24,7 @@ datadir ?= $(sharedir)/$(PROJECT_NAME)
 
 TS_SERVER_CERT = $(DESTDIR)$(datadir)/whisper.store.asn1
 
-PKGS = facil libsignal-protocol-c kjson
+PKGS = facil libsignal-protocol-c kjson libprotobuf-c
 
 ifeq ($(OS),Windows_NT)
   OS = Windows
@@ -34,25 +34,28 @@ endif
 
 ifeq ($(OS),Darwin)
 libksc.so: override LDFLAGS += -dynamiclib -install_name $(realpath $(DESTDIR)$(libdir))/libksc.so
-endif
-
-ifeq ($(OS),Linux)
+else
   override CLDFLAGS += -pthread
 endif
+ifeq ($(OS),OpenBSD)
+  PKGC_LIBCRYPTO = libecrypto11
+endif
+
+PKGC_LIBCRYPTO ?= libcrypto
 
 ifdef GCRYPT
   CRYPT_OBJS = crypto-gcrypt.o
   test: override LDLIBS += -lgcrypt
 else
-  CRYPT_OBJS = crypto-openssl-$(shell $(PKG_CONFIG) --modversion openssl | cut -c1,3).o
-  PKGS += libcrypto
+  CRYPT_OBJS = crypto-openssl-$(shell $(PKG_CONFIG) --modversion $(PKGC_LIBCRYPTO) | cut -c1,3).o
+  PKGS += $(PKGC_LIBCRYPTO)
 endif
 
 CSTD = -std=c11
 
 override CPPFLAGS += \
 	-D_POSIX_C_SOURCE=200809L \
-	-D_XOPEN_SOURCE=500 \
+	-D_XOPEN_SOURCE=700 \
 	-DSIGNAL_USER_AGENT='"$(PROJECT_NAME) $(PROJECT_VERSION)"' \
 	$(CSTD) \
 

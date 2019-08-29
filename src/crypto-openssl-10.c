@@ -13,6 +13,8 @@
 
 #include <signal/signal_protocol.h>
 
+#include "utils.h"		/* ksc_malloc() */
+
 static int random_func(uint8_t *data, size_t len, void *user_data)
 {
 	return RAND_bytes(data, len) ? 0 : SG_ERR_UNKNOWN;
