@@ -54,7 +54,7 @@ class ksc_ffi:
 			                         c_char_p, # recipient
 			                         c_char_p, # body
 			                         c_int, # end_session
-			                         CFUNCTYPE(c_int, c_int, c_char_p, c_void_p), # on_response
+			                         CFUNCTYPE(None, c_int, c_char_p, c_void_p), # on_response
 			                         c_void_p)),
 		}.items():
 			k2 = 'ksc_ffi_' + k

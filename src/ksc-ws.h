@@ -27,6 +27,13 @@ struct ksc_service_address {
 	char *relay;
 };
 
+
+#define KSC_SEND_MESSAGE_RESULT_OK         (1 << 0)
+#define KSC_SEND_MESSAGE_RESULT_NEEDS_SYNC (1 << 1)
+#define KSC_SEND_MESSAGE_RESULT_SYNC_SENT  (1 << 2)
+#define KSC_SEND_MESSAGE_RESULT_TIMEOUT    (1 << 3)
+#define KSC_SEND_MESSAGE_RESULT_UNHANDLED  (1 << 5)
+
 struct ksc_ws_send_message_args {
 	const char *body;
 	bool end_session;
@@ -34,12 +41,9 @@ struct ksc_ws_send_message_args {
 	const void *const *attachments;
 	size_t n_attachments;*/
 
-	void (*on_success)(ws_s *ws, const struct ksc_service_address *recipient,
-	                   bool needs_sync, void *udata);
-	/* 0: to unsubscribe, other to stay subscribed */
-	int (*on_unhandled)(ws_s *ws, const struct ksc_service_address *recipient,
-	                    struct ksc_signal_response *response,
-	                    void *udata);
+	void (*on_result)(const struct ksc_service_address *recipient,
+	                  struct ksc_signal_response *response,
+	                  unsigned result, void *udata);
 	void *udata;
 };
 

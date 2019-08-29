@@ -27,6 +27,8 @@ bool         json_store_get_device_id(const struct json_store *, int32_t *ret);
 const char * json_store_get_password_base64(const struct json_store *);
 const char * json_store_get_signaling_key_base64(const struct json_store *,
                                                  size_t *len);
+/* -1: error, 0: false, 1: true */
+int          json_store_is_multi_device(const struct json_store *);
 
 struct signal_protocol_store_context;
 

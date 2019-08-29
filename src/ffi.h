@@ -70,7 +70,7 @@ int ksc_ffi_send_message(struct ksc_ffi *ffi,
 	size_t n_attachments;*/
 
 	/* 0: to unsubscribe, other to stay subscribed */
-	int (*on_response)(int status, char *message, void *udata),
+	void (*on_response)(int status, char *message, void *udata),
 	void *udata
 );
 

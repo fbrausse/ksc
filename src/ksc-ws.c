@@ -402,16 +402,91 @@ static FIOBJ get(FIOBJ v, const char *key, size_t len)
 
 #define GET(v, cstr)	get(v, cstr, sizeof(cstr)-1)
 
+struct send_message_data2 {
+	ws_s *ws;
+	uint64_t timestamp;
+	struct ksc_ws_send_message_args args;
+	uint8_t *content_packed;
+	size_t content_sz;
+};
+
 struct send_message_data {
+	REF_COUNTED;
 	struct ksc_ws *ksc;
 	struct ksc_service_address recipient;
-	void (*on_success)(ws_s *ws, const struct ksc_service_address *recipient,
-	                   bool needs_sync, void *udata);
-	/* 0: to unsubscribe, other to stay subscribed */
-	int (*on_unhandled)(ws_s *ws, const struct ksc_service_address *recipient,
-	                    struct ksc_signal_response *response, void *udata);
-	void *udata;
+
+	union {
+		struct {
+			uint8_t ok : 1;
+			uint8_t needs_sync : 1;
+			uint8_t sync_sent : 1;
+			uint8_t timeout : 1;
+			uint8_t cb_called : 1;
+			uint8_t unhandled : 1;
+		} result;
+		uint8_t result_u8;
+	};
+
+	struct send_message_data2 data2;
+	bool is_recipient_udpate;
 };
+
+static void send_message_data_unref(struct send_message_data *data)
+{
+	if (UNREF(data))
+		return;
+	ksc_free(data->data2.content_packed);
+	ksc_free(data->recipient.relay);
+	ksc_free(data->recipient.name);
+	ksignal_ctx_unref(data->ksc);
+	ksc_free(data);
+}
+
+static int send_sync_transcript(struct ksc_ws *ksc,
+                                bool is_recipient_update,
+                                struct send_message_data2 *data)
+{
+	/* TODO: send_sync_message(ws, ksc, myself, data); */
+	return 0;
+	(void)ksc;
+	(void)is_recipient_update;
+	(void)data;
+}
+
+static void handle_message_result(struct ksc_signal_response *response,
+                                  struct send_message_data *data)
+{
+	if (data->result.needs_sync && !data->result.sync_sent) {
+		int r = send_sync_transcript(data->ksc,
+		                             data->is_recipient_udpate,
+		                             &data->data2);
+		if (!r)
+			data->result.sync_sent = true;
+	}
+
+	if (!data->result.cb_called && data->data2.args.on_result) {
+		unsigned res = 0;
+		if (data->result.ok) res |= KSC_SEND_MESSAGE_RESULT_OK;
+		if (data->result.needs_sync) res |= KSC_SEND_MESSAGE_RESULT_NEEDS_SYNC;
+		if (data->result.sync_sent) res |= KSC_SEND_MESSAGE_RESULT_SYNC_SENT;
+		if (data->result.timeout) res |= KSC_SEND_MESSAGE_RESULT_TIMEOUT;
+		if (data->result.unhandled) res |= KSC_SEND_MESSAGE_RESULT_UNHANDLED;
+		data->data2.args.on_result(&data->recipient, response, res,
+		                           data->data2.args.udata);
+	}
+	data->result.cb_called = true;
+}
+
+static void on_send_message_response_timeout(void *udata)
+{
+	struct send_message_data *data = udata;
+	struct ksc_ws *ksc = data->ksc;
+	LOG(NOTE, "send message response timeout for recipient %.*s, result: %02x\n",
+	    (int)data->recipient.name_len, data->recipient.name, data->result_u8);
+	data->result.timeout = true;
+	handle_message_result(NULL, data);
+	send_message_data_unref(data);
+}
 
 /* 0: to unsubscribe, other to stay subscribed */
 static int on_send_message_response(ws_s *ws,
@@ -419,7 +494,7 @@ static int on_send_message_response(ws_s *ws,
                                     void *udata)
 {
 	struct send_message_data *data = udata;
-	const struct ksc_ws *ksc = data->ksc;
+	struct ksc_ws *ksc = data->ksc;
 	FIOBJ body = fiobj_null();
 	LOG(NOTE, "message send response: %u %s: %.*s\n",
 	    response->status, response->message,
@@ -433,11 +508,11 @@ static int on_send_message_response(ws_s *ws,
 	if (response->status < 200 || 300 <= response->status) {
 		LOG(ERROR, "send-message failed with status %u %s\n",
 		    response->status, response->message);
-		goto error;
+		goto done;
 	}
 	if (!response->body.len) {
 		LOG(WARN, "send-message-response does not contain a body\n");
-		goto error;
+		goto done;
 	}
 	r = fiobj_json2obj(&body, response->body.data, response->body.len);
 	if (!r || (size_t)r < response->body.len) {
@@ -445,8 +520,10 @@ static int on_send_message_response(ws_s *ws,
 		     "send-message-response: didn't parse entire body, just "
 		     "%zd of %zu bytes\n", r, response->body.len);
 	}
-	if (!r)
-		goto error;
+	if (!r) {
+		r = -1;
+		goto done;
+	}
 	FIOBJ needs_sync = GET(body, "needsSync");
 	r = fiobj_type_is(needs_sync, FIOBJ_T_TRUE) ? 1
 	  : fiobj_type_is(needs_sync, FIOBJ_T_FALSE) ? 0
@@ -455,30 +532,27 @@ static int on_send_message_response(ws_s *ws,
 		LOG(ERROR, "send-message-response: 'needsSync' JSON entry is "
 		    "not of boolean type; value: %s\n",
 		    fiobj_obj2cstr(needs_sync).data);
-		goto error;
+		goto done;
 	}
 	LOG(DEBUG, "send-message-response needs sync: %d\n", !!r);
-	if (data->on_success)
-		data->on_success(ws, &data->recipient, r, data->udata);
-	goto done;
-
-error:
-	fiobj_free(body);
-	if (data->on_unhandled)
-		return data->on_unhandled(ws, &data->recipient, response,
-		                          data->udata);
+	data->result.ok = true;
+	if (r)
+		data->result.needs_sync = true;
+	r = 0;
 done:
+	if (r < 0)
+		data->result.unhandled = true;
+	handle_message_result(response, data);
 	fiobj_free(body);
 	return 0;
+	(void)ws;
 }
 
 static void on_send_message_unsubscribe(void *udata)
 {
 	struct send_message_data *data = udata;
-	ksc_free(data->recipient.relay);
-	ksc_free(data->recipient.name);
-	ksignal_ctx_unref(data->ksc);
-	ksc_free(data);
+	handle_message_result(NULL, data);
+	send_message_data_unref(data);
 }
 
 static ec_public_key * str2ec_public_key(FIOBJ s, const struct ksc_ws *ksc)
@@ -598,14 +672,6 @@ static int process_hash_pk_bundle(FIOBJ response, const char *name,
 }
 
 #undef GET
-
-struct send_message_data2 {
-	ws_s *ws;
-	uint64_t timestamp;
-	struct ksc_ws_send_message_args args;
-	uint8_t *content_packed;
-	size_t content_sz;
-};
 
 struct device_array {
 	int32_t *ids;
@@ -888,6 +954,8 @@ done:
 
 #define CSTR2FIOBJ(const_str)	fiobj_str_new(const_str, sizeof(const_str)-1)
 
+#define SEND_MESSAGE_RESPONSE_TIMEOUT	10 /* seconds */
+
 static int send_message_final(const char *recipient, size_t recipient_len,
                               struct ksc_ws *ksc, struct device_array *devices,
                               struct send_message_data2 data)
@@ -931,8 +999,6 @@ static int send_message_final(const char *recipient, size_t recipient_len,
 
 	LOGr(!message_list, "message_list: %p\n", message_list);
 
-	ksc_free(data.content_packed);
-
 	char *path = ksc_ckprintf("/v1/messages/%.*s", (int)recipient_len, recipient);
 
 	FIOBJ msg = fiobj_hash_new();
@@ -959,18 +1025,19 @@ static int send_message_final(const char *recipient, size_t recipient_len,
 
 	LOG(DEBUG, "sending JSON: %.*s\n", (int)json_c.len, json_c.data);
 
-	struct send_message_data cb_data = {
-		ksc,
-		{ ksc_memdup(recipient, recipient_len), recipient_len, NULL },
-		data.args.on_success,
-		data.args.on_unhandled,
-		data.args.udata,
-	};
+	struct send_message_data *cb_data = ksc_calloc(1, sizeof(*cb_data));
 	ksignal_ctx_ref(ksc);
+	cb_data->ksc = ksc;
+	cb_data->recipient.name = ksc_memdup(recipient, recipient_len);
+	cb_data->recipient.name_len = recipient_len;
+	cb_data->data2 = data;
+	cb_data->is_recipient_udpate = false; /* TODO */
+	cb_data->result.needs_sync = json_store_is_multi_device(ksc->js);
 
 	static char *headers[] = {
 		"Content-Type: application/json",
 	};
+	REF(cb_data);
 	r = ksc_ws_send_request(data.ws, "PUT", path,
 	                        .size = json_c.len,
 	                        .body = json_c.data,
@@ -978,7 +1045,15 @@ static int send_message_final(const char *recipient, size_t recipient_len,
 	                        .n_headers = ARRAY_SIZE(headers),
 	                        .on_response = on_send_message_response,
 	                        .on_unsubscribe = on_send_message_unsubscribe,
-	                        .udata = ksc_memdup(&cb_data, sizeof(cb_data)));
+	                        .udata = cb_data);
+	if (r)
+		cb_data = NULL;
+
+	if (!r) {
+		REF(cb_data);
+		fio_run_every(SEND_MESSAGE_RESPONSE_TIMEOUT * 1000, 1,
+		              on_send_message_response_timeout, cb_data, NULL);
+	}
 
 	fiobj_free(json);
 	fiobj_free(msg);
@@ -986,7 +1061,7 @@ static int send_message_final(const char *recipient, size_t recipient_len,
 
 	LOGr(r, "ksc_ws_send_request -> %d\n", r);
 
-	if (data.args.end_session) {
+	if (!r && data.args.end_session) {
 		r = signal_protocol_session_delete_all_sessions(ksc->psctx,
 		                                                recipient,
 		                                                recipient_len);

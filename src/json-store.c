@@ -383,6 +383,14 @@ const char * json_store_get_signaling_key_base64(const struct json_store *js,
 	return v->s.begin;
 }
 
+int json_store_is_multi_device(const struct json_store *js)
+{
+	struct kjson_value *v = kjson_get(&js->cfg, "isMultiDevice");
+	if (!v || v->type != KJSON_VALUE_BOOLEAN)
+		return -1;
+	return v->b;
+}
+
 static int kjscmp(const struct kjson_string *a, const char *b, size_t b_len)
 {
 	ssize_t r = a->len - b_len;
