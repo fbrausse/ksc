@@ -268,15 +268,16 @@ static int received_ciphertext_or_prekey_bundle(ws_s *ws,
 
 	session_cipher_free(cipher);
 
+	if (!r && plaintext)
+		r = received_message(ws, e, signal_buffer_data(plaintext),
+		                     signal_buffer_len(plaintext), ksc)
+		    ? 0 : SG_ERR_UNKNOWN;
+
 	if (!r || r == SG_ERR_DUPLICATE_MESSAGE) {
 		struct delete_request_args args = { ws, ksc };
 		fio_defer(delete_request, ksc_memdup(&args, sizeof(args)),
 		          ack_message_path(e));
 	}
-	if (!r && plaintext)
-		r = received_message(ws, e, signal_buffer_data(plaintext),
-		                     signal_buffer_len(plaintext), ksc)
-		    ? 0 : SG_ERR_UNKNOWN;
 
 	signal_buffer_free(plaintext);
 
@@ -481,6 +482,7 @@ static int send_sync_transcript(struct send_message_data *d)
 
 	Signalservice__SyncMessage__Sent sent = SIGNALSERVICE__SYNC_MESSAGE__SENT__INIT;
 	sent.destination = d->recipient.name;
+	sent.has_timestamp = true;
 	sent.timestamp = d->data2.timestamp;
 	sent.message = &data;
 	if (data.has_expiretimer && data.expiretimer > 0) {
