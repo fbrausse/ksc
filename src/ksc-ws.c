@@ -406,7 +406,8 @@ struct send_message_data2 {
 	ws_s *ws;
 	uint64_t timestamp;
 	struct ksc_ws_send_message_args args;
-	uint8_t *content_packed;
+	uint8_t *content;
+	size_t content_padded_sz;
 	size_t content_sz;
 };
 
@@ -435,31 +436,87 @@ static void send_message_data_unref(struct send_message_data *data)
 {
 	if (UNREF(data))
 		return;
-	ksc_free(data->data2.content_packed);
+	ksc_free(data->data2.content);
 	ksc_free(data->recipient.relay);
 	ksc_free(data->recipient.name);
 	ksignal_ctx_unref(data->ksc);
 	ksc_free(data);
 }
 
-static int send_sync_transcript(struct ksc_ws *ksc,
-                                bool is_recipient_update,
-                                struct send_message_data2 *data)
+static void
+on_sent_sync_transcript_result(const struct ksc_service_address *recipient,
+                               struct ksc_signal_response *response,
+                               unsigned result, void *udata)
 {
-	/* TODO: send_sync_message(ws, ksc, myself, data); */
-	return 0;
-	(void)ksc;
-	(void)is_recipient_update;
-	(void)data;
+	KSC_DEBUG(INFO, "on_sent_sync_transcript_result: %02x\n", result);
+	(void)recipient;
+	(void)response;
+	(void)udata;
+}
+
+static int send_message(ws_s *ws, struct ksc_ws *ksc, const char *recipient,
+                        const Signalservice__Content *content_message,
+                        uint64_t timestamp,
+                        struct ksc_ws_send_message_args args);
+
+static int send_sync_transcript(struct send_message_data *d)
+{
+	struct ksc_ws *ksc = d->ksc;
+
+	Signalservice__Content *content;
+	content = signalservice__content__unpack(NULL, d->data2.content_sz,
+	                                         d->data2.content);
+	assert(content);
+
+	if (!content->datamessage) {
+		LOG(ERROR, "refusing to send sync transcript for content "
+		           "without a data message sent to %.*s\n",
+		           (int)d->recipient.name_len, d->recipient.name);
+		return -1;
+	}
+
+	assert(content->datamessage);
+
+	Signalservice__DataMessage data = *content->datamessage;
+
+	Signalservice__SyncMessage__Sent sent = SIGNALSERVICE__SYNC_MESSAGE__SENT__INIT;
+	sent.destination = d->recipient.name;
+	sent.timestamp = d->data2.timestamp;
+	sent.message = &data;
+	if (data.has_expiretimer && data.expiretimer > 0) {
+		sent.has_expirationstarttimestamp = true;
+		struct timeval tv;
+		gettimeofday(&tv, NULL);
+		sent.expirationstarttimestamp = tv.tv_sec * 1000 + tv.tv_usec / 1000;
+	}
+	if (data.has_messagetimer && data.messagetimer > 0)
+		data.attachments = NULL;
+	sent.isrecipientupdate = d->is_recipient_udpate;
+
+	Signalservice__SyncMessage sync = SIGNALSERVICE__SYNC_MESSAGE__INIT;
+	sync.sent = &sent;
+
+	Signalservice__Content sync_content = SIGNALSERVICE__CONTENT__INIT;
+	sync_content.syncmessage = &sync;
+
+	const char *local_name = json_store_get_username(ksc->js);
+	assert(local_name);
+	struct ksc_ws_send_message_args args = {
+		NULL, false, on_sent_sync_transcript_result, NULL,
+	};
+	int r = send_message(d->data2.ws, ksc, local_name, &sync_content,
+	                     d->data2.timestamp, args);
+
+	signalservice__content__free_unpacked(content, NULL);
+
+	return r;
 }
 
 static void handle_message_result(struct ksc_signal_response *response,
                                   struct send_message_data *data)
 {
 	if (data->result.needs_sync && !data->result.sync_sent) {
-		int r = send_sync_transcript(data->ksc,
-		                             data->is_recipient_udpate,
-		                             &data->data2);
+		int r = send_sync_transcript(data);
 		if (!r)
 			data->result.sync_sent = true;
 	}
@@ -981,8 +1038,8 @@ static int send_message_final(const char *recipient, size_t recipient_len,
 	for (int32_t *b = a; b < devices->ids + devices->n; b++) {
 		/* encrypt for (target->name, DEFAULT_DEVICE_ID) */
 		addr.device_id = *b;
-		r = encrypt_for(&addr, ksc, data.content_packed,
-		                data.content_sz, message_tail);
+		r = encrypt_for(&addr, ksc, data.content,
+		                data.content_padded_sz, message_tail);
 		LOGr(r, "encrypt_for device %" PRId32 "-> %d\n", addr.device_id, r);
 		if (!r)
 			message_tail = &(*message_tail)->next;
@@ -1028,7 +1085,7 @@ static int send_message_final(const char *recipient, size_t recipient_len,
 	struct send_message_data *cb_data = ksc_calloc(1, sizeof(*cb_data));
 	ksignal_ctx_ref(ksc);
 	cb_data->ksc = ksc;
-	cb_data->recipient.name = ksc_memdup(recipient, recipient_len);
+	cb_data->recipient.name = strndup(recipient, recipient_len);
 	cb_data->recipient.name_len = recipient_len;
 	cb_data->data2 = data;
 	cb_data->is_recipient_udpate = false; /* TODO */
@@ -1137,20 +1194,17 @@ error:
 	return r;
 }
 
-int (ksc_ws_send_message)(ws_s *ws, struct ksc_ws *ksc, const char *recipient,
-                          struct ksc_ws_send_message_args args)
+static int send_message(ws_s *ws, struct ksc_ws *ksc, const char *recipient,
+                        const Signalservice__Content *content,
+                        uint64_t timestamp,
+                        struct ksc_ws_send_message_args args)
 {
-	Signalservice__DataMessage data = SIGNALSERVICE__DATA_MESSAGE__INIT;
-	prepare_data_message(&data, &args);
-
-	Signalservice__Content content = SIGNALSERVICE__CONTENT__INIT;
-	content.datamessage = &data;
-
-	size_t content_sz = signalservice__content__get_packed_size(&content);
+	size_t content_sz = signalservice__content__get_packed_size(content);
 	uint8_t *content_packed = ksc_malloc(ksc_one_and_zeroes_padded_size(content_sz, PADDING));
-	signalservice__content__pack(&content, content_packed);
+	signalservice__content__pack(content, content_packed);
 
-	ksc_one_and_zeroes_pad(content_packed, &content_sz, PADDING);
+	size_t content_padded_sz = content_sz;
+	ksc_one_and_zeroes_pad(content_packed, &content_padded_sz, PADDING);
 
 	signal_lock(ksc->ctx);
 	int r = 0;
@@ -1163,7 +1217,8 @@ int (ksc_ws_send_message)(ws_s *ws, struct ksc_ws *ksc, const char *recipient,
 		goto done;
 
 	struct send_message_data2 data2 = {
-		ws, data.timestamp, args, content_packed, content_sz,
+		ws, timestamp, args, content_packed, content_padded_sz,
+		content_sz,
 	};
 	content_packed = NULL; /* transferred ownership */
 	if (no_session.n) {
@@ -1186,6 +1241,18 @@ done:
 	ksc_free(all.ids);
 	ksc_free(no_session.ids);
 	return r;
+}
+
+int (ksc_ws_send_message)(ws_s *ws, struct ksc_ws *ksc, const char *recipient,
+                          struct ksc_ws_send_message_args args)
+{
+	Signalservice__DataMessage data = SIGNALSERVICE__DATA_MESSAGE__INIT;
+	prepare_data_message(&data, &args);
+
+	Signalservice__Content content = SIGNALSERVICE__CONTENT__INIT;
+	content.datamessage = &data;
+
+	return send_message(ws, ksc, recipient, &content, data.timestamp, args);
 }
 
 
