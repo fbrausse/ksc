@@ -246,7 +246,7 @@ static void on_ws_response(ws_s *s,
 			dprintf(fd, "  body size: %zu\n", response->body.len);
 	}
 	if (response->has_id) {
-		/* TODO: inefficient repacking of unpacked protobuf */
+		/* XXX: inefficient repacking of unpacked protobuf */
 		size_t sz = signalservice__web_socket_response_message__pack(response, (uint8_t *)scratch);
 		fio_publish(
 			.message = { .data = scratch, .len = sz },

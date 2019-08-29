@@ -1128,7 +1128,7 @@ static int send_message_final(const char *recipient, size_t recipient_len,
 			r = 0;
 	}
 
-	/* TODO: directly encode into FIOBJ w/o going via struct outgoing_push_message */
+	/* XXX: directly encode into FIOBJ w/o going via struct outgoing_push_message */
 
 done:
 	for (struct outgoing_push_message *m, *mn = message_list; (m = mn);) {
