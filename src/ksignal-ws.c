@@ -212,7 +212,7 @@ static void on_ws_request(ws_s *s,
 			dprintf(fd, "  body size: %zu\n", request->body.len);
 	}
 	int r = 0;
-	if (h && h->handle_request)
+	if (h->handle_request)
 		r = h->handle_request(s, request->verb, request->path,
 		                      request->has_id ? &request->id : NULL,
 		                      request->n_headers, request->headers,
@@ -253,7 +253,7 @@ static void on_ws_response(ws_s *s,
 			.filter = id2filter(response->id)
 		);
 	}
-	if (h && h->handle_response)
+	if (h->handle_response)
 		h->handle_response(s, response->message,
 		                   response->has_status ? &response->status : NULL,
 		                   response->has_id     ? &response->id : NULL,

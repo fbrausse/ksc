@@ -21,6 +21,12 @@ struct ksc_ws;
 intptr_t ksc_ws_get_uuid(const struct ksc_ws *kws);
 void * ksc_ws_get_udata(const struct ksc_ws *kws);
 
+struct ksc_service_address {
+	char *name;
+	size_t name_len;
+	char *relay;
+};
+
 struct ksc_ws_send_message_args {
 	const char *body;
 	bool end_session;
@@ -28,9 +34,12 @@ struct ksc_ws_send_message_args {
 	const void *const *attachments;
 	size_t n_attachments;*/
 
+	void (*on_success)(ws_s *ws, const struct ksc_service_address *recipient,
+	                   bool needs_sync, void *udata);
 	/* 0: to unsubscribe, other to stay subscribed */
-	int (*on_response)(ws_s *ws, struct ksc_signal_response *response,
-	                   void *udata);
+	int (*on_unhandled)(ws_s *ws, const struct ksc_service_address *recipient,
+	                    struct ksc_signal_response *response,
+	                    void *udata);
 	void *udata;
 };
 

@@ -250,8 +250,14 @@ struct ffi_send_message_data {
 	void *udata;
 };
 
-static int ffi_on_response(ws_s *ws, struct ksc_signal_response *response,
-                           void *udata)
+static void ffi_on_success(ws_s *ws, const struct ksc_service_address *recipient,
+                           bool needs_sync, void *udata)
+{
+}
+
+static int ffi_on_unhandled(ws_s *ws, const struct ksc_service_address *recipient,
+                            struct ksc_signal_response *response,
+                            void *udata)
 {
 	struct ffi_send_message_data *d = udata;
 	int r = 0;
@@ -283,7 +289,8 @@ int ksc_ffi_send_message(struct ksc_ffi *ffi, const char *recipient,
 	int r = ksc_ws_send_message(ffi->ws, ffi->kws, recipient,
 	                            .body = body,
 	                            .end_session = end_session,
-	                            .on_response = ffi_on_response,
+	                            .on_success = ffi_on_success,
+	                            .on_unhandled = ffi_on_unhandled,
 	                            .udata = cb_data,
 	);
 	if (r)
