@@ -607,11 +607,17 @@ struct send_message_data2 {
 	size_t content_sz;
 };
 
+struct device_array {
+	int32_t *ids;
+	size_t n;
+};
+
+#define DEVICE_ARRAY_INIT	{ NULL, 0 }
+
 struct prekey_request_data {
 	char *name;
 	size_t name_len;
-	int32_t *device_ids;
-	size_t n_device_ids;
+	struct device_array no_session;
 	struct ksc_ws *ksc;
 	bool requested;
 	bool received;
@@ -621,8 +627,7 @@ struct prekey_request_data {
 };
 
 static int send_message_final(const char *recipient, size_t recipient_len,
-                              struct ksc_ws *ksc, size_t n_devices,
-                              int32_t devices[static n_devices],
+                              struct ksc_ws *ksc, struct device_array *devices,
                               struct send_message_data2 data);
 
 #define DEFAULT_DEVICE_ID	1
@@ -633,13 +638,14 @@ void signal_unlock(signal_context *context);
 
 /* returns a (negative) signal error or the number of devices placed at
  * *devices. Remember to free *devices. */
-static ssize_t known_target_devices(int32_t **devices, const char *recipient,
-                                    size_t recipient_len,
-                                    const struct ksc_ws *ksc)
+static int known_target_devices(struct device_array *res,
+                                const char *recipient,
+                                size_t recipient_len,
+                                const struct ksc_ws *ksc)
 {
 	int32_t *devs = NULL;
 	signal_int_list *sessions = NULL;
-	ssize_t r = 0;
+	int r = 0;
 
 	bool myself = !strcmp(json_store_get_username(ksc->js), recipient);
 	int32_t my_device_id;
@@ -651,7 +657,7 @@ static ssize_t known_target_devices(int32_t **devices, const char *recipient,
 	                                                    &sessions,
 	                                                    recipient,
 	                                                    recipient_len);
-	LOGr(r < 0, "signal_protocol_session_get_sub_device_sessions -> %zd\n", r);
+	LOGr(r < 0, "signal_protocol_session_get_sub_device_sessions -> %d\n", r);
 	if (r < 0)
 		goto done;
 
@@ -674,15 +680,14 @@ static ssize_t known_target_devices(int32_t **devices, const char *recipient,
 		if (!myself || my_device_id != device_id)
 			*fill++ = device_id;
 	}
-	r = fill - devs;
+	res->n = fill - devs;
+	res->ids = devs;
 
 done:
 	signal_int_list_free(sessions);
 	signal_unlock(ksc->ctx);
 	if (r < 0)
 		free(devs);
-	else
-		*devices = devs;
 	return r;
 }
 
@@ -713,17 +718,13 @@ static void on_prekey_response(http_s *h)
 					dprintf(fd, "\n");
 				}
 			}
-			int32_t *devices = NULL;
-			ssize_t n = r;
+			struct device_array devices;
 			if (!r)
-				n = known_target_devices(&devices, pr->name,
+				r = known_target_devices(&devices, pr->name,
 				                         pr->name_len, ksc);
-			if (n < 0)
-				r = n;
 			if (!r) {
 				r = send_message_final(pr->name, pr->name_len,
-				                       ksc, n, devices,
-				                       pr->data);
+				                       ksc, &devices, pr->data);
 				LOGr(r, "send_message_final() -> %d\n", r);
 			}
 		}
@@ -751,7 +752,7 @@ static void on_prekey_finish(http_settings_s *s)
 	struct ksc_ws *ksc = pr->ksc;
 	LOG(DEBUG, "on_prekey_finish()\n");
 	free(pr->name);
-	free(pr->device_ids);
+	free(pr->no_session.ids);
 	ksignal_ctx_unref(ksc);
 	free(pr);
 }
@@ -760,7 +761,7 @@ static void on_prekey_finish(http_settings_s *s)
 #define PREKEY_DEVICE_PATH		"/v2/keys/%.*s/%" PRId32
 
 static intptr_t get_pre_keys(const char *recipient, size_t recipient_len,
-                             int32_t *device_ids, size_t n_device_ids,
+                             struct device_array *devices,
                              struct ksc_ws *ksc,
                              struct send_message_data2 data2)
 {
@@ -780,19 +781,18 @@ static intptr_t get_pre_keys(const char *recipient, size_t recipient_len,
 	FIOBJ auth_header = fiobj_str_new(auth_enc, 6 + auth_enc_len);
 	free(auth);
 
-	char *url = n_device_ids != 1 || device_ids[0] == DEFAULT_DEVICE_ID
+	char *url = devices->n != 1 || devices->ids[0] == DEFAULT_DEVICE_ID
 	          ? ksc_ckprintf("https://" KSC_SERVICE_HOST PREKEY_ALL_DEVICES_PATH,
 	                         (int)recipient_len, recipient)
 	          : ksc_ckprintf("https://" KSC_SERVICE_HOST PREKEY_DEVICE_PATH,
 	                         (int)recipient_len, recipient,
-	                         device_ids[0]);
+	                         devices->ids[0]);
 	ksignal_ctx_ref(ksc);
 	struct prekey_request_data pr = {
 		.name = ksc_memdup(recipient, recipient_len),
 		.name_len = recipient_len,
 		.ksc = ksc,
-		.device_ids = device_ids,
-		.n_device_ids = n_device_ids,
+		.no_session = *devices,
 		.auth = auth_header,
 		.data = data2,
 	};
@@ -889,8 +889,7 @@ done:
 #define CSTR2FIOBJ(const_str)	fiobj_str_new(const_str, sizeof(const_str)-1)
 
 static int send_message_final(const char *recipient, size_t recipient_len,
-                              struct ksc_ws *ksc, size_t n_devices,
-                              int32_t devices[static n_devices],
+                              struct ksc_ws *ksc, struct device_array *devices,
                               struct send_message_data2 data)
 {
 	int r;
@@ -905,13 +904,13 @@ static int send_message_final(const char *recipient, size_t recipient_len,
 		LOG(INFO, "sending message to %.*s (devices:",
 		           (int)recipient_len, recipient);
 		int fd = (ksc->args.log ? ksc->args.log : &KSC_DEFAULT_LOG)->fd;
-		for (size_t i=0; i<n_devices; i++)
-			dprintf(fd, " %" PRId32, devices[i]);
+		for (size_t i=0; i<devices->n; i++)
+			dprintf(fd, " %" PRId32, devices->ids[i]);
 		dprintf(fd, ")\n");
 	}
 
-	int32_t *a = devices;
-	for (int32_t *b = a; b < devices + n_devices; b++) {
+	int32_t *a = devices->ids;
+	for (int32_t *b = a; b < devices->ids + devices->n; b++) {
 		/* encrypt for (target->name, DEFAULT_DEVICE_ID) */
 		addr.device_id = *b;
 		r = encrypt_for(&addr, ksc, data.content_packed,
@@ -926,9 +925,9 @@ static int send_message_final(const char *recipient, size_t recipient_len,
 		if (r)
 			goto done;
 	}
-	size_t n_failed = a - devices;
+	size_t n_failed = a - devices->ids;
 	LOGr(n_failed, "failed to encrypt to %zu of %zu devices of %.*s\n",
-	     n_failed, n_devices, (int)recipient_len, recipient);
+	     n_failed, devices->n, (int)recipient_len, recipient);
 
 	LOGr(!message_list, "message_list: %p\n", message_list);
 
@@ -1005,7 +1004,7 @@ done:
 		ksc_free(m);
 	}
 	message_list = NULL, message_tail = &message_list;
-	free(devices);
+	free(devices->ids);
 
 	return r;
 }
@@ -1026,27 +1025,41 @@ static void prepare_data_message(Signalservice__DataMessage *data,
 	data->has_timestamp = true;
 }
 
-static int dev_id_remove_avail_pre_keys(const char *recipient,
-                                        size_t recipient_len,
-                                        struct ksc_ws *ksc, size_t *n_devs,
-                                        int32_t devs[static *n_devs])
+static int known_target_devices_(struct device_array *all,
+                                 struct device_array *no_session,
+                                 const char *recipient, size_t recipient_len,
+                                 struct ksc_ws *ksc)
 {
-	int32_t *a = devs;
+	int r;
+	r = known_target_devices(all, recipient, recipient_len, ksc);
+	if (r < 0)
+		return r;
+
+	no_session->n = all->n;
+	no_session->ids = ksc_memdup(all->ids, sizeof(*all->ids) * all->n);
+
+	int32_t *a = no_session->ids;
 	struct signal_protocol_address addr = {
 		.name = recipient,
 		.name_len = recipient_len,
 	};
-	for (int32_t *b = devs; b < devs + *n_devs; b++) {
+	for (int32_t *b = a; b < no_session->ids + no_session->n; b++) {
 		addr.device_id = *b;
 		int r = signal_protocol_session_contains_session(ksc->psctx, &addr);
 		if (r < 0)
-			return r;
+			goto error;
 		if (r)
 			continue;
 		*a++ = *b;
 	}
-	*n_devs = a - devs;
+	no_session->n = a - no_session->ids;
+
 	return 0;
+
+error:
+	free(all->ids);
+	free(no_session->ids);
+	return r;
 }
 
 int (ksc_ws_send_message)(ws_s *ws, struct ksc_ws *ksc, const char *recipient,
@@ -1068,18 +1081,9 @@ int (ksc_ws_send_message)(ws_s *ws, struct ksc_ws *ksc, const char *recipient,
 	int r = 0;
 	size_t recipient_len = strlen(recipient);
 
-	int32_t *devs = NULL;
-	int32_t *get_prekeys_for = NULL;
-	ssize_t n = known_target_devices(&devs, recipient, recipient_len, ksc);
-	if (n < 0) {
-		r = n;
-		goto done;
-	}
-
-	size_t gn = n;
-	get_prekeys_for = ksc_memdup(devs, sizeof(*devs) * n);
-	r = dev_id_remove_avail_pre_keys(recipient, recipient_len, ksc, &gn,
-	                                 get_prekeys_for);
+	struct device_array all = DEVICE_ARRAY_INIT;
+	struct device_array no_session = DEVICE_ARRAY_INIT;
+	r = known_target_devices_(&all, &no_session, recipient, recipient_len, ksc);
 	if (r < 0)
 		goto done;
 
@@ -1087,25 +1091,25 @@ int (ksc_ws_send_message)(ws_s *ws, struct ksc_ws *ksc, const char *recipient,
 		ws, data.timestamp, args, content_packed, content_sz,
 	};
 	content_packed = NULL; /* transferred ownership */
-	if (gn) {
+	if (no_session.n) {
 		intptr_t sock = get_pre_keys(recipient, recipient_len,
-		                             get_prekeys_for, gn, ksc, data2);
-		get_prekeys_for = NULL; /* transferred ownership */
+		                             &no_session, ksc, data2);
+		no_session.ids = NULL; /* transferred ownership */
 		LOGr(sock < 0, "get_pre_keys() -> %zd\n", sock);
 		if (sock < 0) {
 			r = sock;
 			goto done;
 		}
 	} else {
-		r = send_message_final(recipient, recipient_len, ksc, n, devs, data2);
-		devs = NULL; /* transferred ownership */
+		r = send_message_final(recipient, recipient_len, ksc, &all, data2);
+		all.ids = NULL; /* transferred ownership */
 	}
 
 done:
 	signal_unlock(ksc->ctx);
 	ksc_free(content_packed);
-	ksc_free(devs);
-	ksc_free(get_prekeys_for);
+	ksc_free(all.ids);
+	ksc_free(no_session.ids);
 	return r;
 }
 
