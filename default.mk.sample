@@ -1,8 +1,9 @@
 
 datadir = share
 
-PKG_CONFIG_PATH = ../libsignal-protocol-c/installed/lib/pkgconfig:../facil.io/tmp/pkgconfig:../kjson/pkgconfig
-
 SERVICE_PROTO_PATH = ../libsignal-service-java/protobuf
+METADATA_PROTO_PATH = ../libsignal-metadata-java/protobuf
+
+PKG_CONFIG_PATH = ../libsignal-protocol-c/installed/lib/pkgconfig:../facil.io/tmp/pkgconfig:../kjson/pkgconfig
 
 PKG_CONFIG := PKG_CONFIG_PATH=$(PKG_CONFIG_PATH) $(PKG_CONFIG)

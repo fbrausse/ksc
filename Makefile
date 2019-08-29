@@ -96,11 +96,15 @@ SERVICE_PROTO_FILES = \
 	Provisioning.proto \
 	SignalService.proto \
 
+METADATA_PROTO_FILES = \
+	UnidentifiedDelivery.proto \
+
 LOCAL_PROTO_FILES = \
 	LocalStorageProtocol.proto \
 
 PROTO_FILES = \
 	$(SERVICE_PROTO_FILES) \
+	$(METADATA_PROTO_FILES) \
 	$(LOCAL_PROTO_FILES) \
 
 PROTO_SRCS = $(addprefix src/,\
@@ -144,8 +148,14 @@ pic/%.o: override CFLAGS += -fPIC
 
 $(PROTO_SRCS): protos
 
-protos: $(addprefix $(SERVICE_PROTO_PATH)/,$(SERVICE_PROTO_FILES)) $(LOCAL_PROTO_FILES)
-	$(PROTOC_C) --c_out=src/ --proto_path=$(SERVICE_PROTO_PATH) --proto_path=. $(PROTO_FILES) && touch $@
+protos: $(addprefix $(SERVICE_PROTO_PATH)/,$(SERVICE_PROTO_FILES))
+protos: $(addprefix $(METADATA_PROTO_PATH)/,$(METADATA_PROTO_FILES))
+protos: $(LOCAL_PROTO_FILES)
+	$(PROTOC_C) --c_out=src/ \
+		--proto_path=$(SERVICE_PROTO_PATH) \
+		--proto_path=$(METADATA_PROTO_PATH) \
+		--proto_path=. \
+		$(PROTO_FILES) && touch $@
 
 %/:
 	mkdir -p $@
