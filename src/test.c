@@ -28,17 +28,18 @@ static const struct ksc_log_context log_ctx = {
 #define LOG_(level,...)		LOGL_(level, &ksc->log, __VA_ARGS__)
 #define LOG(lvl,...)		LOGL(lvl, &ksc->log, __VA_ARGS__)
 
-static void print_data_message(int fd, Signalservice__DataMessage *e)
+static void print_data_message(int fd, Signalservice__DataMessage *e, int indent)
 {
+	dprintf(fd, "%*s# unknown fields: %u\n", indent, "", e->base.n_unknown_fields);
 	if (e->body)
-		dprintf(fd, "  body: %s\n", e->body);
+		dprintf(fd, "%*sbody: %s\n", indent, "", e->body);
 	if (e->n_attachments)
-		dprintf(fd, "  attachments: %zu\n", e->n_attachments);
+		dprintf(fd, "%*sattachments: %zu\n", indent, "", e->n_attachments);
 	if (e->group) {
 		struct _Signalservice__GroupContext *g = e->group;
-		dprintf(fd, "  has group info:\n");
+		dprintf(fd, "%*shas group info:\n", indent, "");
 		if (g->has_id) {
-			dprintf(fd, "    id: ");
+			dprintf(fd, "%*sid: ", indent+2, "");
 			ksc_dprint_hex(fd, g->id.data, g->id.len);
 			dprintf(fd, "\n");
 		}
@@ -52,21 +53,21 @@ static void print_data_message(int fd, Signalservice__DataMessage *e)
 			case SIGNALSERVICE__GROUP_CONTEXT__TYPE__REQUEST_INFO: type = "request info"; break;
 			case _SIGNALSERVICE__GROUP_CONTEXT__TYPE_IS_INT_SIZE: break;
 			}
-			dprintf(fd, "    type: %s (%d)\n", type, g->type);
+			dprintf(fd, "%*stype: %s (%d)\n", indent+2, "", type, g->type);
 		}
 		if (g->name)
-			dprintf(fd, "    name: %s\n", g->name);
+			dprintf(fd, "%*sname: %s\n", indent+2, "", g->name);
 		for (size_t i=0; i<g->n_members; i++)
-			dprintf(fd, "    member: %s\n", g->members[i]);
+			dprintf(fd, "%*smember: %s\n", indent+2, "", g->members[i]);
 		if (g->avatar)
-			dprintf(fd, "    has avatar\n");
+			dprintf(fd, "%*shas avatar\n", indent+2, "");
 	}
 	if (e->has_flags)
-		dprintf(fd, "  flags: 0x%x\n", e->flags);
+		dprintf(fd, "%*sflags: 0x%x\n", indent, "", e->flags);
 	if (e->has_expiretimer)
-		dprintf(fd, "  expire timer: %ud\n", e->expiretimer);
+		dprintf(fd, "%*sexpire timer: %ud\n", indent, "", e->expiretimer);
 	if (e->has_profilekey) {
-		dprintf(fd, "  profile key:\n");
+		dprintf(fd, "%*sprofile key:\n", indent, "");
 		ksc_dprint_hex(fd, e->profilekey.data, e->profilekey.len);
 		dprintf(fd, "\n");
 	}
@@ -74,21 +75,78 @@ static void print_data_message(int fd, Signalservice__DataMessage *e)
 		char buf[32];
 		time_t t = e->timestamp / 1000;
 		ctime_r(&t, buf);
-		dprintf(fd, "  timestamp: %s", buf);
+		dprintf(fd, "%*stimestamp: %s", indent, "", buf);
 	}
 	if (e->quote)
-		dprintf(fd, "  has quote\n");
+		dprintf(fd, "%*shas quote\n", indent, "");
 	if (e->n_contact)
-		dprintf(fd, "  # contacts: %zu\n", e->n_contact);
+		dprintf(fd, "%*s# contacts: %zu\n", indent, "", e->n_contact);
 	if (e->n_preview)
-		dprintf(fd, "  # previews: %zu\n", e->n_preview);
+		dprintf(fd, "%*s# previews: %zu\n", indent, "", e->n_preview);
 	if (e->sticker)
-		dprintf(fd, "  has sticker\n");
+		dprintf(fd, "%*shas sticker\n", indent, "");
 	if (e->has_requiredprotocolversion)
-		dprintf(fd, "  required protocol version: %ud\n",
+		dprintf(fd, "%*srequired protocol version: %ud\n", indent, "",
 		        e->requiredprotocolversion);
 	if (e->has_messagetimer)
-		dprintf(fd, "  message timer: %ud\n", e->messagetimer);
+		dprintf(fd, "%*smessage timer: %ud\n", indent, "", e->messagetimer);
+}
+
+static void print_sync_message(int fd, Signalservice__SyncMessage *e, int indent)
+{
+	dprintf(fd, "%*s# unknown fields: %u\n", indent, "", e->base.n_unknown_fields);
+	if (e->sent) {
+		dprintf(fd, "%*s----- sent -----\n", indent, "");
+		dprintf(fd, "%*sdestination: %s\n", indent, "", e->sent->destination);
+		if (e->sent->has_timestamp) {
+			char buf[32];
+			time_t t = e->sent->timestamp / 1000;
+			ctime_r(&t, buf);
+			dprintf(fd, "%*stimestamp: %s", indent, "", buf);
+		}
+		if (e->sent->message) {
+			dprintf(fd, "%*smessage:\n", indent, "");
+			print_data_message(fd, e->sent->message, indent+2);
+		}
+		if (e->sent->has_expirationstarttimestamp) {
+			char buf[32];
+			time_t t = e->sent->expirationstarttimestamp / 1000;
+			ctime_r(&t, buf);
+			dprintf(fd, "%*sexpiration start timestamp: %s", indent, "", buf);
+		}
+		dprintf(fd, "%*s# unidentified status: %zu\n", indent, "", e->sent->n_unidentifiedstatus);
+		for (size_t i=0; i<e->sent->n_unidentifiedstatus; i++) {
+			struct _Signalservice__SyncMessage__Sent__UnidentifiedDeliveryStatus *u;
+			u = e->sent->unidentifiedstatus[i];
+			dprintf(fd, "%*sdestination: %s\n", indent+2, "", u->destination);
+			if (u->has_unidentified)
+				dprintf(fd, "%*sunidentified: %d\n", indent+2, "", u->unidentified);
+		}
+		if (e->sent->has_isrecipientupdate)
+			dprintf(fd, "%*sis recipient update: %d\n", indent, "", e->sent->isrecipientupdate);
+	}
+	if (e->contacts)
+		dprintf(fd, "%*s----- contacts -----\n", indent, "");
+	if (e->groups)
+		dprintf(fd, "%*s----- groups -----\n", indent, "");
+	if (e->request)
+		dprintf(fd, "%*s----- request -----\n", indent, "");
+	if (e->read)
+		dprintf(fd, "%*s----- # read: %zu -----\n", indent, "", e->n_read);
+	if (e->blocked)
+		dprintf(fd, "%*s----- blocked -----\n", indent, "");
+	if (e->verified)
+		dprintf(fd, "%*s----- verified -----\n", indent, "");
+	if (e->configuration)
+		dprintf(fd, "%*s----- configuration -----\n", indent, "");
+	if (e->has_padding)
+		dprintf(fd, "%*spadding: %zu bytes\n", indent, "", e->padding.len);
+	if (e->stickerpackoperation)
+		dprintf(fd, "%*s----- sticker pack op -----\n", indent, "");
+	if (e->contacts)
+		dprintf(fd, "%*s----- contacts -----\n", indent, "");
+	if (e->messagetimerread)
+		dprintf(fd, "%*s----- message timer read -----\n", indent, "");
 }
 
 struct ksc_ctx {
@@ -254,10 +312,12 @@ static bool on_content(ws_s *ws, struct ksc_ws *kws,
 		}
 		if (c->datamessage) {
 			dprintf(ksc->log.fd, "  ------ data ------\n");
-			print_data_message(ksc->log.fd, c->datamessage);
+			print_data_message(ksc->log.fd, c->datamessage, 2);
 		}
-		if (c->syncmessage)
+		if (c->syncmessage) {
 			dprintf(ksc->log.fd, "  ------ sync ------\n");
+			print_sync_message(ksc->log.fd, c->syncmessage, 4);
+		}
 		if (c->callmessage)
 			dprintf(ksc->log.fd, "  ------ call ------\n");
 		if (c->nullmessage)
@@ -269,8 +329,18 @@ static bool on_content(ws_s *ws, struct ksc_ws *kws,
 	}
 	if (c->base.n_unknown_fields)
 		return false;
-	if (c->syncmessage)
+	if (c->syncmessage) {
+		Signalservice__SyncMessage *s = c->syncmessage;
+		if (s->base.n_unknown_fields)
+			return false;
+		if (s->contacts || s->groups || s->request || s->read ||
+		    s->blocked || s->verified || s->configuration ||
+		    s->stickerpackoperation || s->messagetimerread)
+			return false;
+		if (s->sent)
+			return true;
 		return false;
+	}
 	if (c->callmessage)
 		return false;
 	if (c->receiptmessage)
