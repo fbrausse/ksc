@@ -136,9 +136,10 @@ struct ksc_log {
 		const char *desc;
 		enum ksc_log_lvl max_lvl;
 	} *context_lvls;
+	int override_color;
 };
 
-#define KSC_DEFAULT_LOG	(struct ksc_log){ INT_MAX, STDERR_FILENO, NULL }
+#define KSC_DEFAULT_LOG	(struct ksc_log){ INT_MAX, STDERR_FILENO, NULL, 0 }
 
 void ksc_log_fini(struct ksc_log *log);
 

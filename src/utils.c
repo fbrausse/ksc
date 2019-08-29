@@ -140,7 +140,7 @@ bool ksc_log_lvl_parse(const char *lvl, enum ksc_log_lvl *res)
 	return false;
 }
 
-static void ksc_log_desc_msg(int fd, enum ksc_log_lvl level,
+static void ksc_log_desc_msg(struct ksc_log *log, enum ksc_log_lvl level,
                              const struct ksc_log_context *context)
 {
 #define BOLD	"1;"
@@ -154,7 +154,8 @@ static void ksc_log_desc_msg(int fd, enum ksc_log_lvl level,
 #undef BOLD
 	level = MIN(level,ARRAY_SIZE(lvls)-1);
 	const char *desc = context && context->desc ? context->desc : "";
-	if (isatty(fd)) {
+	int fd = log->fd;
+	if (log->override_color > 0 || (!log->override_color && isatty(fd))) {
 		const char *color;
 		color = context && context->color ? context->color : "0";
 /* VT100 color escape sequence */
@@ -197,7 +198,7 @@ void ksc_vlog(enum ksc_log_lvl level, struct ksc_log *log,
 	if (!log)
 		log = &default_log;
 
-	ksc_log_desc_msg(log->fd, level, context);
+	ksc_log_desc_msg(log, level, context);
 	vdprintf(log->fd, fmt, ap);
 }
 

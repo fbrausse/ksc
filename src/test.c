@@ -401,13 +401,14 @@ int main(int argc, char **argv)
 	bool force = false;
 	const char *message = NULL;
 	bool end_session = false;
-	for (int opt; (opt = getopt(argc, argv, ":c:efhm:p:v:")) != -1;)
+	for (int opt; (opt = getopt(argc, argv, ":c:C:efhm:p:v:")) != -1;)
 		switch (opt) {
 		case 'c': cert_path = optarg; break;
+		case 'C': log.override_color = atoi(optarg); break;
 		case 'e': end_session = true; break;
 		case 'f': force = true; break;
 		case 'h':
-			fprintf(stderr, "usage: %s [-c CERT_PATH] [-f] [-m MESSAGE] [-p CLI_CONFIG_PATH] [-v ARG]\n", argv[0]);
+			fprintf(stderr, "usage: %s [-c CERT_PATH] [-C OVERRIDE_COLOR] [-f] [-m MESSAGE] [-p CLI_CONFIG_PATH] [-v ARG]\n", argv[0]);
 			exit(0);
 		case 'm': message = optarg; break;
 		case 'p': cli_path = optarg; break;
