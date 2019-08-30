@@ -30,74 +30,14 @@ static const struct ksc_log_context log_ctx = {
 
 #include "ksc-ws-private.h"
 
-static FIOBJ get(FIOBJ v, const char *key, size_t len)
-{
-	FIOBJ k = fiobj_str_new(key, len);
-	FIOBJ r = fiobj_hash_get(v, k);
-	fiobj_free(k);
-	return r;
-}
-
-#define GET(v, cstr)	get(v, cstr, sizeof(cstr)-1)
-
-struct send_message_data2 {
-	ws_s *ws;
-	uint64_t timestamp;
-	struct ksc_ws_send_message_args args;
-	uint8_t *content;
-	size_t content_padded_sz;
-	size_t content_sz;
-	bool may_need_sync;
-};
-
-struct send_message_data {
-	REF_COUNTED;
-	struct ksc_ws *ksc;
-	struct ksc_service_address recipient;
-
-	union {
-		struct {
-			uint8_t ok : 1;
-			uint8_t needs_sync : 1;
-			uint8_t sync_sent : 1;
-			uint8_t timeout : 1;
-			uint8_t cb_called : 1;
-			uint8_t unhandled : 1;
-		} result;
-		uint8_t result_u8;
-	};
-
-	struct send_message_data2 data2;
-	bool is_recipient_udpate;
-};
-
-static void send_message_data_unref(struct send_message_data *data)
-{
-	if (UNREF(data))
-		return;
-	ksc_free(data->data2.content);
-	ksc_free(data->recipient.relay);
-	ksc_free(data->recipient.name);
-	ksignal_ctx_unref(data->ksc);
-	ksc_free(data);
-}
-
-static void
-on_sent_sync_transcript_result(const struct ksc_service_address *recipient,
-                               struct ksc_signal_response *response,
-                               unsigned result, void *udata)
-{
-	KSC_DEBUG(INFO, "on_sent_sync_transcript_result: 0x%02x\n", result);
-	(void)recipient;
-	(void)response;
-	(void)udata;
-}
-
+/* Sends a Content message via PUT /v1/messages/NUMBER */
 static int send_message(ws_s *ws, struct ksc_ws *ksc, const char *recipient,
                         const Signalservice__Content *content_message,
                         uint64_t timestamp,
                         struct ksc_ws_send_message_args args);
 
+/* Sends a Sync message to the local address (ksc->js's username) via
+ * send_message() */
 static int send_sync_message(ws_s *ws, struct ksc_ws *ksc,
                              Signalservice__SyncMessage *sync,
                              struct ksc_ws_send_message_args args)
@@ -119,6 +59,10 @@ static int send_sync_message(ws_s *ws, struct ksc_ws *ksc,
 
 	return send_message(ws, ksc, local_name, &content, timestamp, args);
 }
+
+/* --------------------------------------------------------------------------
+ * Send a sync-request message. Purpose not clear, yet.
+ * -------------------------------------------------------------------------- */
 
 struct sync_request_data {
 	struct ksc_ws *ksc;
@@ -179,6 +123,92 @@ int ksc_ws_sync_request(ws_s *ws, struct ksc_ws *ksc,
 	return send_sync_message(ws, ksc, &sync, args);
 }
 
+/* --------------------------------------------------------------------------
+ * FIOBJ hash helper.
+ * -------------------------------------------------------------------------- */
+
+static FIOBJ get(FIOBJ v, const char *key, size_t len)
+{
+	FIOBJ k = fiobj_str_new(key, len);
+	FIOBJ r = fiobj_hash_get(v, k);
+	fiobj_free(k);
+	return r;
+}
+
+#define GET(v, cstr)	get(v, cstr, sizeof(cstr)-1)
+
+/* --------------------------------------------------------------------------
+ * Handle a message-send response message
+ * (the server reply to PUT /v1/messages/NUMBER).
+ *
+ * The server replies with a `needs_sync` information, there also is
+ * `needs_sync` info from the setup stage of sending the PUT /v1/messages/NUMBER
+ * message. If any `needs_sync` holds, proceed by sending a sync-transcript
+ * (to ourself, in order to notify our other devices of the message we just
+ * sent). This should only apply to data-messages. No other behaviour from the
+ * server has been observed. A sync-transcript is a sync-sent message containing
+ * a content-data-message, thus the original protobuf-encoded Content is kept
+ * around until either of the following events occur:
+ * - on_response
+ * - unsubscribe
+ * - timeout
+ *
+ * Finally, call the user's callback with the response and status obtained.
+ * -------------------------------------------------------------------------- */
+
+struct send_message_data2 {
+	ws_s *ws;
+	uint64_t timestamp;
+	struct ksc_ws_send_message_args args;
+	uint8_t *content;
+	size_t content_padded_sz;
+	size_t content_sz;
+	bool may_need_sync;
+};
+
+struct send_message_data {
+	REF_COUNTED;
+	struct ksc_ws *ksc;
+	struct ksc_service_address recipient;
+
+	union {
+		struct {
+			uint8_t ok : 1;
+			uint8_t needs_sync : 1;
+			uint8_t sync_sent : 1;
+			uint8_t timeout : 1;
+			uint8_t cb_called : 1;
+			uint8_t unhandled : 1;
+		} result;
+		uint8_t result_u8;
+	};
+
+	struct send_message_data2 data2;
+	bool is_recipient_udpate;
+};
+
+static void send_message_data_unref(struct send_message_data *data)
+{
+	if (UNREF(data))
+		return;
+	ksc_free(data->data2.content);
+	ksc_free(data->recipient.relay);
+	ksc_free(data->recipient.name);
+	ksignal_ctx_unref(data->ksc);
+	ksc_free(data);
+}
+
+static void
+on_sent_sync_transcript_result(const struct ksc_service_address *recipient,
+                               struct ksc_signal_response *response,
+                               unsigned result, void *udata)
+{
+	KSC_DEBUG(INFO, "on_sent_sync_transcript_result: 0x%02x\n", result);
+	(void)recipient;
+	(void)response;
+	(void)udata;
+}
+
 static int send_sync_transcript(struct send_message_data *d)
 {
 	struct ksc_ws *ksc = d->ksc;
@@ -227,8 +257,8 @@ static int send_sync_transcript(struct send_message_data *d)
 	return r;
 }
 
-static void handle_message_result(struct ksc_signal_response *response,
-                                  struct send_message_data *data)
+static void handle_send_message_result(struct ksc_signal_response *response,
+                                       struct send_message_data *data)
 {
 	if (data->result.needs_sync && !data->result.sync_sent) {
 		int r = send_sync_transcript(data);
@@ -256,7 +286,7 @@ static void on_send_message_response_timeout(void *udata)
 	LOG(NOTE, "send message response timeout for recipient %.*s, result: %02x\n",
 	    (int)data->recipient.name_len, data->recipient.name, data->result_u8);
 	data->result.timeout = true;
-	handle_message_result(NULL, data);
+	handle_send_message_result(NULL, data);
 	send_message_data_unref(data);
 }
 
@@ -320,7 +350,7 @@ static int on_send_message_response(ws_s *ws,
 done:
 	if (r < 0)
 		data->result.unhandled = true;
-	handle_message_result(response, data);
+	handle_send_message_result(response, data);
 	fiobj_free(body);
 	return 0;
 	(void)ws;
@@ -329,9 +359,14 @@ done:
 static void on_send_message_unsubscribe(void *udata)
 {
 	struct send_message_data *data = udata;
-	handle_message_result(NULL, data);
+	handle_send_message_result(NULL, data);
 	send_message_data_unref(data);
 }
+
+/* --------------------------------------------------------------------------
+ * Decode and process received pre-key bundles into sessions for devices of a
+ * single recipient.
+ * -------------------------------------------------------------------------- */
 
 static ec_public_key * str2ec_public_key(FIOBJ s, const struct ksc_ws *ksc)
 {
@@ -449,7 +484,10 @@ static int process_hash_pk_bundle(FIOBJ response, const char *name,
 	return r;
 }
 
-#undef GET
+/* --------------------------------------------------------------------------
+ * Get the known sessions for all devices of a recipient from the protocol
+ * store.
+ * -------------------------------------------------------------------------- */
 
 struct device_array {
 	int32_t *ids;
@@ -457,22 +495,6 @@ struct device_array {
 };
 
 #define DEVICE_ARRAY_INIT	{ NULL, 0 }
-
-struct prekey_request_data {
-	char *name;
-	size_t name_len;
-	struct device_array no_session;
-	struct ksc_ws *ksc;
-	bool requested;
-	bool received;
-	FIOBJ auth;
-
-	struct send_message_data2 data;
-};
-
-static int send_message_final(const char *recipient, size_t recipient_len,
-                              struct ksc_ws *ksc, struct device_array *devices,
-                              struct send_message_data2 data);
 
 #define DEFAULT_DEVICE_ID	1
 
@@ -534,6 +556,29 @@ done:
 		free(devs);
 	return r;
 }
+
+/* --------------------------------------------------------------------------
+ * Get pre-key bundles for devices from the server.
+ * -------------------------------------------------------------------------- */
+
+#define PREKEY_ALL_DEVICES_PATH		"/v2/keys/%.*s/*"
+#define PREKEY_DEVICE_PATH		"/v2/keys/%.*s/%" PRId32
+
+struct prekey_request_data {
+	char *name;
+	size_t name_len;
+	struct device_array no_session;
+	struct ksc_ws *ksc;
+	bool requested;
+	bool received;
+	FIOBJ auth;
+
+	struct send_message_data2 data;
+};
+
+static int send_message_final(const char *recipient, size_t recipient_len,
+                              struct ksc_ws *ksc, struct device_array *devices,
+                              struct send_message_data2 data);
 
 static void on_prekey_response(http_s *h)
 {
@@ -601,9 +646,6 @@ static void on_prekey_finish(http_settings_s *s)
 	free(pr);
 }
 
-#define PREKEY_ALL_DEVICES_PATH		"/v2/keys/%.*s/*"
-#define PREKEY_DEVICE_PATH		"/v2/keys/%.*s/%" PRId32
-
 static intptr_t get_pre_keys(const char *recipient, size_t recipient_len,
                              struct device_array *devices,
                              struct ksc_ws *ksc,
@@ -653,6 +695,10 @@ static intptr_t get_pre_keys(const char *recipient, size_t recipient_len,
 
 	return r;
 }
+
+/* --------------------------------------------------------------------------
+ * Encrypt a message for a NUMBER + device.
+ * -------------------------------------------------------------------------- */
 
 struct outgoing_push_message {
 	struct outgoing_push_message *next;
@@ -730,6 +776,19 @@ done:
 	return r;
 }
 
+/* --------------------------------------------------------------------------
+ * Final stage of sending a message via PUT /v1/messages/NUMBER.
+ * Encrypt the message for all target devices and set the request. For this,
+ * set up ref-counted send_message_data for these events:
+ * - on_response: the server sends the information `needs_sync` JSON-encoded,
+ *                process that and handle the result.
+ * - on_unsubscribe: clean up the callback data and handle the result.
+ * - on_send_message_timeout: if the server failed to reply, record that event
+ *                            and handle the result.
+ * -------------------------------------------------------------------------- */
+
+#define SEND_MESSAGE_PATH	"/v1/messages/%.*s"
+
 #define CSTR2FIOBJ(const_str)	fiobj_str_new(const_str, sizeof(const_str)-1)
 
 #define SEND_MESSAGE_RESPONSE_TIMEOUT	10 /* seconds */
@@ -777,7 +836,8 @@ static int send_message_final(const char *recipient, size_t recipient_len,
 
 	LOGr(!message_list, "message_list: %p\n", message_list);
 
-	char *path = ksc_ckprintf("/v1/messages/%.*s", (int)recipient_len, recipient);
+	char *path = ksc_ckprintf(SEND_MESSAGE_PATH,
+	                          (int)recipient_len, recipient);
 
 	FIOBJ msg = fiobj_hash_new();
 	fiobj_hash_set(msg, CSTR2FIOBJ("destination"),
@@ -915,6 +975,15 @@ error:
 	free(no_session->ids);
 	return r;
 }
+
+/* --------------------------------------------------------------------------
+ * Initiate sending a message via PUT /v1/messages/NUMBER.
+ * If for all known devices of `recipient` there is an established session,
+ * proceed with the final stage of sending the PUT request to the websocket.
+ * Otherwise, before the final stage, send a get-pre-keys request and only on
+ * successful reply and processing of the retrieved pre-key bundles proceed
+ * with the final stage of sending the message.
+ *--------------------------------------------------------------------------- */
 
 static int send_message(ws_s *ws, struct ksc_ws *ksc, const char *recipient,
                         const Signalservice__Content *content,
