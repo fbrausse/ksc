@@ -23,6 +23,10 @@
 #include <signal/session_cipher.h>
 #include <signal/session_builder.h>
 
+#include <signal/hkdf.h>
+
+#include "UnidentifiedDelivery.pb-c.h"
+
 static const struct ksc_log_context log_ctx = {
 	.desc = "ksc-ws",
 	.color = "34",
@@ -217,33 +221,32 @@ static void delete_request(void *udata1, void *udata2)
 	ksc_free(args);
 }
 
-static char * ack_message_path(const Signalservice__Envelope *e)
+static char * ack_message_path(const Signalservice__Envelope *e,
+                               const signal_protocol_address *addr)
 {
 	return e->serverguid
 	       ? ksc_ckprintf("/v1/messages/uuid/%s", e->serverguid)
-	       : ksc_ckprintf("/v1/messages/%s/%" PRIu64, e->source, e->timestamp);
+	       : ksc_ckprintf("/v1/messages/%.*s/%" PRIu64,
+	                      (int)addr->name_len, addr->name, e->timestamp);
 }
 
-static int received_ciphertext_or_prekey_bundle(ws_s *ws,
-                                                const Signalservice__Envelope *e,
-                                                struct ksc_ws *ksc)
+static int received_ciphertext_or_prekey_bundle2(ws_s *ws,
+                                                 const Signalservice__Envelope *e,
+                                                 signal_protocol_address *addr,
+                                                 Signalservice__Envelope__Type type,
+                                                 const struct ProtobufCBinaryData *content,
+                                                 struct ksc_ws *ksc)
 {
-	signal_protocol_address addr = {
-		.name = e->source,
-		.name_len = strlen(e->source),
-		.device_id = e->sourcedevice,
-	};
-
 	signal_buffer *plaintext = NULL;
 	session_cipher *cipher;
-	int r = session_cipher_create(&cipher, ksc->psctx, &addr, ksc->ctx);
+	int r = session_cipher_create(&cipher, ksc->psctx, addr, ksc->ctx);
 	LOGr(r, "session_cipher_create -> %d\n", r);
 	if (r)
 		return r;
 
-	if (e->type == CIPHERTEXT) {
+	if (type == CIPHERTEXT) {
 		signal_message *msg;
-		r = signal_message_deserialize(&msg, e->content.data, e->content.len, ksc->ctx);
+		r = signal_message_deserialize(&msg, content->data, content->len, ksc->ctx);
 		LOGr(r, "signal_message_deserialize -> %d\n", r);
 		if (!r) {
 			r = session_cipher_decrypt_signal_message(cipher, msg, NULL, &plaintext);
@@ -253,9 +256,9 @@ static int received_ciphertext_or_prekey_bundle(ws_s *ws,
 		}
 		SIGNAL_UNREF(msg);
 	} else {
-		assert(e->type == PREKEY_BUNDLE);
-		pre_key_signal_message *msg;
-		r = pre_key_signal_message_deserialize(&msg, e->content.data, e->content.len, ksc->ctx);
+		assert(type == PREKEY_BUNDLE);
+		pre_key_signal_message *msg = NULL;
+		r = pre_key_signal_message_deserialize(&msg, content->data, content->len, ksc->ctx);
 		LOGr(r, "pre_key_signal_message_deserialize -> %d\n", r);
 		if (!r) {
 			r = session_cipher_decrypt_pre_key_signal_message(cipher, msg, NULL, &plaintext);
@@ -276,12 +279,27 @@ static int received_ciphertext_or_prekey_bundle(ws_s *ws,
 	if (!r || r == SG_ERR_DUPLICATE_MESSAGE) {
 		struct delete_request_args args = { ws, ksc };
 		fio_defer(delete_request, ksc_memdup(&args, sizeof(args)),
-		          ack_message_path(e));
+		          ack_message_path(e, addr));
+		r = 0;
 	}
 
 	signal_buffer_free(plaintext);
 
 	return r;
+}
+
+static int received_ciphertext_or_prekey_bundle(ws_s *ws,
+                                                const Signalservice__Envelope *e,
+                                                struct ksc_ws *ksc)
+{
+	signal_protocol_address addr = {
+		.name = e->source,
+		.name_len = strlen(e->source),
+		.device_id = e->sourcedevice,
+	};
+
+	return received_ciphertext_or_prekey_bundle2(ws, e, &addr, e->type,
+	                                             &e->content, ksc);
 }
 
 static int received_receipt(ws_s *ws, const Signalservice__Envelope *e,
@@ -297,6 +315,381 @@ static int received_receipt(ws_s *ws, const Signalservice__Envelope *e,
 	return r ? 0 : -1;
 }
 
+#define UNIDENTIFIED_CIPHERTEXT_VERSION		1
+#define UNIDENTIFIED_HKDF_MESSAGE_VERSION	3
+#define UNIDENTIFIED_SALT_PREFIX		"UnidentifiedDelivery"
+
+#define UNIDENTIFIED_CHAIN_KEY_SZ		32
+#define UNIDENTIFIED_CHAIN_KEY_OFF		0
+#define UNIDENTIFIED_CIPHER_KEY_SZ		32
+#define UNIDENTIFIED_CIPHER_KEY_OFF \
+	(UNIDENTIFIED_CHAIN_KEY_OFF + UNIDENTIFIED_CHAIN_KEY_SZ)
+#define UNIDENTIFIED_MAC_KEY_SZ			32
+#define UNIDENTIFIED_MAC_KEY_OFF \
+	(UNIDENTIFIED_CIPHER_KEY_OFF + UNIDENTIFIED_CIPHER_KEY_SZ)
+#define UNIDENTIFIED_HKDF_DERIVED_SZ \
+	(UNIDENTIFIED_MAC_KEY_OFF + UNIDENTIFIED_MAC_KEY_SZ)
+
+#define UNIDENTIFIED_MSG_MAC_SZ			10
+
+static inline void * ksc_mempcpy(void *restrict tgt, const void *restrict src,
+                                 size_t n)
+{
+	return (char *)memcpy(tgt, src, n) + n;
+}
+
+static inline void * ksc_mempcpy_buf(void *restrict tgt, signal_buffer *buf)
+{
+	return ksc_mempcpy(tgt, signal_buffer_data(buf), signal_buffer_len(buf));
+}
+
+static int calculate_keys(ec_public_key *ephemeral,
+                          ec_private_key *identity,
+                          const struct ksc_ws *ksc,
+                          const uint8_t *salt, size_t salt_sz,
+                          uint8_t **chain_cipher_mac_key)
+{
+	uint8_t *agreement = NULL, *derived = NULL;
+	hkdf_context *ctx = NULL;
+
+	int r = curve_calculate_agreement(&agreement, ephemeral, identity);
+	LOGr(r < 0, "curve_calculate_agreement() -> %d\n", r);
+	if (r < 0)
+		return r;
+	size_t agreement_sz = r;
+	r = 0;
+
+	r = hkdf_create(&ctx, UNIDENTIFIED_HKDF_MESSAGE_VERSION, ksc->ctx);
+	LOGr(r, "hkdf_create() -> %d\n", r);
+
+	ssize_t sz = hkdf_derive_secrets(ctx, &derived, agreement, agreement_sz,
+	                                 salt, salt_sz, NULL, 0,
+	                                 UNIDENTIFIED_HKDF_DERIVED_SZ);
+	LOGr(sz != UNIDENTIFIED_HKDF_DERIVED_SZ, "hkdf_derive_secrets() -> %zd\n", sz);
+	if (sz != UNIDENTIFIED_HKDF_DERIVED_SZ) {
+		r = -1;
+		goto done;
+	}
+
+	*chain_cipher_mac_key = derived;
+done:
+	SIGNAL_UNREF(ctx);
+	free(agreement);
+	return r;
+}
+
+int signal_hmac_sha256_init(signal_context *context, void **hmac_context, const uint8_t *key, size_t key_len);
+int signal_hmac_sha256_update(signal_context *context, void *hmac_context, const uint8_t *data, size_t data_len);
+int signal_hmac_sha256_final(signal_context *context, void *hmac_context, signal_buffer **output);
+void signal_hmac_sha256_cleanup(signal_context *context, void *hmac_context);
+
+int signal_decrypt(signal_context *context,
+        signal_buffer **output,
+        int cipher,
+        const uint8_t *key, size_t key_len,
+        const uint8_t *iv, size_t iv_len,
+        const uint8_t *ciphertext, size_t ciphertext_len);
+
+static signal_buffer * decrypt(const uint8_t cipher_key[static UNIDENTIFIED_CIPHER_KEY_SZ],
+                               const uint8_t mac_key[static UNIDENTIFIED_MAC_KEY_SZ],
+                               uint8_t *ciphertext, size_t ciphertext_sz,
+                               struct ksc_ws *ksc)
+{
+	if (ciphertext_sz < UNIDENTIFIED_MSG_MAC_SZ) {
+		LOG(ERROR, "unidentified-sender message static ciphertext too short for MAC\n");
+		return NULL;
+	}
+
+	signal_buffer *our_mac = NULL;
+	void *hmac = NULL;
+	int r;
+	signal_hmac_sha256_init(ksc->ctx, &hmac, mac_key, UNIDENTIFIED_MAC_KEY_SZ);
+	signal_hmac_sha256_update(ksc->ctx, hmac, ciphertext,
+	                          ciphertext_sz - UNIDENTIFIED_MSG_MAC_SZ);
+	signal_hmac_sha256_final(ksc->ctx, hmac, &our_mac);
+	signal_hmac_sha256_cleanup(ksc->ctx, hmac);
+
+	if (signal_buffer_len(our_mac) < UNIDENTIFIED_MSG_MAC_SZ) {
+		LOG(ERROR, "unidentified-sender message static our-MAC too short\n");
+		r = -2;
+		goto done;
+	}
+	if (memcmp(signal_buffer_data(our_mac),
+	           ciphertext + (ciphertext_sz - UNIDENTIFIED_MSG_MAC_SZ),
+	           UNIDENTIFIED_MSG_MAC_SZ)) {
+		LOG(ERROR, "unidentified-sender message static MACs don't match\n");
+		r = -3;
+		goto done;
+	}
+
+	static const uint8_t iv[16];
+
+	signal_buffer *decrypted = NULL;
+	r = signal_decrypt(ksc->ctx, &decrypted, SG_CIPHER_AES_CTR_NOPADDING,
+	                   cipher_key, UNIDENTIFIED_CIPHER_KEY_SZ,
+	                   iv, ARRAY_SIZE(iv),
+	                   ciphertext, ciphertext_sz - UNIDENTIFIED_MSG_MAC_SZ);
+	LOGr(r, "signal_decrypt() -> %d\n", r);
+	if (r) {
+		signal_buffer_free(decrypted);
+		decrypted = NULL;
+	}
+
+done:
+	signal_buffer_free(our_mac);
+	return decrypted;
+}
+
+static signal_buffer *
+sealed_session_decrypt(const Signal__UnidentifiedSenderMessage *msg,
+                       uint64_t timestamp, struct ksc_ws *ksc)
+{
+	int r = 0;
+	ec_public_key *ephemeral = NULL;
+	ec_public_key *static_key = NULL;
+	signal_buffer *ephemeral_buf = NULL;
+	signal_buffer *ident_pubkey_buf = NULL;
+	signal_buffer *static_key_buf = NULL;
+	signal_buffer *dec_msg = NULL;
+	uint8_t *keys = NULL;
+	uint8_t *salt = NULL;
+	uint8_t *static_salt = NULL;
+	uint8_t *static_keys = NULL;
+
+	if (!msg->has_ephemeralpublic || !msg->has_encryptedstatic ||
+	    !msg->has_encryptedmessage) {
+		LOG(ERROR, "unidentified-sender message is missing fields\n");
+		goto done;
+	}
+
+	/* XXX: this is an extremely inefficient copy orgy, but "super safe C"
+	 * ... omg */
+
+	r = curve_decode_point(&ephemeral, msg->ephemeralpublic.data,
+	                       msg->ephemeralpublic.len, ksc->ctx);
+	LOGr(r, "curve_decode_point() -> %d\n", r);
+
+	ratchet_identity_key_pair *our_identity;
+	r = signal_protocol_identity_get_key_pair(ksc->psctx, &our_identity);
+	LOGr(r, "signal_protocol_identity_get_key_pair() -> %d\n", r);
+
+	r = ec_public_key_serialize(&ephemeral_buf, ephemeral);
+	LOGr(r, "ec_public_key_serialize(identity-public-key) -> %d\n", r);
+
+	r = ec_public_key_serialize(&ident_pubkey_buf,
+	                            ratchet_identity_key_pair_get_public(our_identity));
+	LOGr(r, "ec_public_key_serialize(identity-public-key) -> %d\n", r);
+
+	size_t salt_sz = sizeof(UNIDENTIFIED_SALT_PREFIX)-1 +
+	                 signal_buffer_len(ident_pubkey_buf) +
+	                 signal_buffer_len(ephemeral_buf);
+	salt = malloc(salt_sz);
+	if (!salt)
+		goto done;
+
+	uint8_t *tgt = salt;
+	tgt = ksc_mempcpy(tgt, UNIDENTIFIED_SALT_PREFIX, sizeof(UNIDENTIFIED_SALT_PREFIX)-1);
+	tgt = ksc_mempcpy_buf(tgt, ident_pubkey_buf);
+	tgt = ksc_mempcpy_buf(tgt, ephemeral_buf);
+
+	r = calculate_keys(ephemeral,
+	                   ratchet_identity_key_pair_get_private(our_identity),
+	                   ksc, salt, salt_sz, &keys);
+	LOGr(r, "calculate_keys() -> %d\n", r);
+
+	static_key_buf = decrypt(keys + UNIDENTIFIED_CIPHER_KEY_OFF,
+	                         keys + UNIDENTIFIED_MAC_KEY_OFF,
+	                         msg->encryptedstatic.data, msg->encryptedstatic.len, ksc);
+	LOGr(!static_key_buf, "decrypt(static) -> %p\n", static_key_buf);
+
+	r = curve_decode_point(&static_key, signal_buffer_data(static_key_buf),
+	                       signal_buffer_len(static_key_buf), ksc->ctx);
+	LOGr(r, "curve_decode_point(static-key) -> %d\n", r);
+
+	size_t static_salt_sz = UNIDENTIFIED_CHAIN_KEY_SZ + msg->encryptedstatic.len;
+	static_salt = ksc_malloc(static_salt_sz);
+	tgt = static_salt;
+	tgt = ksc_mempcpy(tgt, keys + UNIDENTIFIED_CHAIN_KEY_OFF, UNIDENTIFIED_CHAIN_KEY_SZ);
+	tgt = ksc_mempcpy(tgt, msg->encryptedstatic.data, msg->encryptedstatic.len);
+
+	r = calculate_keys(static_key,
+	                   ratchet_identity_key_pair_get_private(our_identity),
+	                   ksc, static_salt, static_salt_sz, &static_keys);
+	LOGr(r, "calculate_keys(static-keys) -> %d\n", r);
+
+	dec_msg = decrypt(static_keys + UNIDENTIFIED_CIPHER_KEY_OFF,
+	                  static_keys + UNIDENTIFIED_MAC_KEY_OFF,
+	                  msg->encryptedmessage.data, msg->encryptedmessage.len,
+	                  ksc);
+	LOGr(!dec_msg, "decrypt(msg) -> %p\n", dec_msg);
+
+done:
+	free(static_keys);
+	free(static_salt);
+	free(keys);
+	free(salt);
+	signal_buffer_free(static_key_buf);
+	signal_buffer_free(ident_pubkey_buf);
+	signal_buffer_free(ephemeral_buf);
+	SIGNAL_UNREF(our_identity);
+	SIGNAL_UNREF(static_key);
+	SIGNAL_UNREF(ephemeral);
+	return dec_msg;
+}
+
+static int received_unidentified_sender(ws_s *ws,
+                                        const Signalservice__Envelope *e,
+                                        struct ksc_ws *ksc)
+{
+	uint8_t *data = e->content.data;
+	signal_buffer *dec_msg_buf = NULL;
+	Signal__UnidentifiedSenderMessage__Message *dec_msg = NULL;
+	Signal__SenderCertificate__Certificate *sender_cert = NULL;
+	Signal__ServerCertificate__Certificate *server_cert = NULL;
+
+	if (e->content.len < 1)
+		return SG_ERR_INVALID_VERSION;
+
+	int version = data[0] >> 4;
+	if (version != UNIDENTIFIED_CIPHERTEXT_VERSION)
+		return SG_ERR_INVALID_VERSION;
+
+	Signal__UnidentifiedSenderMessage *msg = NULL;
+
+	msg = signal__unidentified_sender_message__unpack(NULL, e->content.len-1,
+	                                                  data+1);
+	int r;
+	if (!msg) {
+		LOG(ERROR, "protobuf-unpacking unidentified-sender message\n");
+		r = SG_ERR_INVALID_PROTO_BUF;
+		goto done;
+	}
+
+	dec_msg_buf = sealed_session_decrypt(msg, e->servertimestamp, ksc);
+	LOGr(!dec_msg_buf, "sealed_session_decrypt() -> %p\n", dec_msg_buf);
+
+	dec_msg = (Signal__UnidentifiedSenderMessage__Message *)
+	          protobuf_c_message_unpack(
+		&signal__unidentified_sender_message__message__descriptor,
+		NULL, signal_buffer_len(dec_msg_buf),
+		signal_buffer_data(dec_msg_buf));
+	LOGr(!dec_msg, "protobuf-unpacking decrypted unidentified-sender message -> %p\n", dec_msg);
+	if (!dec_msg)
+		goto done;
+
+	KSC_DEBUG(NOTE, "decoded unid message:\n");
+	if (dec_msg->has_type)
+		dprintf(STDERR_FILENO, "  type: %d\n", dec_msg->type);
+	if (dec_msg->sendercertificate) {
+		dprintf(STDERR_FILENO, "  has sender certificate\n");
+		if (dec_msg->sendercertificate->has_certificate)
+			dprintf(STDERR_FILENO, "    has certificate\n");
+		if (dec_msg->sendercertificate->has_signature)
+			dprintf(STDERR_FILENO, "    has signature\n");
+	}
+	if (dec_msg->has_content)
+		dprintf(STDERR_FILENO, "  has content: %zu bytes\n",
+		        dec_msg->content.len);
+
+	if (!dec_msg->has_type || !dec_msg->sendercertificate ||
+	    !dec_msg->has_content) {
+		LOG(ERROR, "decrypted unid message is missing fields\n");
+		r = SG_ERR_INVALID_MESSAGE;
+		goto done;
+	}
+	if (!dec_msg->sendercertificate->has_signature ||
+	    !dec_msg->sendercertificate->has_certificate) {
+		LOG(ERROR, "unid's sender certificate is missing fields\n");
+		r = SG_ERR_INVALID_MESSAGE;
+		goto done;
+	}
+
+	sender_cert = (Signal__SenderCertificate__Certificate *)
+	              protobuf_c_message_unpack(
+		&signal__sender_certificate__certificate__descriptor,
+		NULL, dec_msg->sendercertificate->certificate.len,
+		dec_msg->sendercertificate->certificate.data);
+	LOGr(!sender_cert, "unid: protobuf-unpacking sender certificate -> %p\n", sender_cert);
+
+	if (!sender_cert->signer || !sender_cert->has_identitykey ||
+	    !sender_cert->has_senderdevice || !sender_cert->sender) {
+		LOG(ERROR, "unid's unpacked sender certificate is missing fields\n");
+		r = SG_ERR_INVALID_MESSAGE;
+		goto done;
+	}
+
+	if (!sender_cert->signer->has_certificate ||
+	    !sender_cert->signer->has_signature) {
+		LOG(ERROR, "unid's signer's certificate is missing fields\n");
+		r = SG_ERR_INVALID_MESSAGE;
+		goto done;
+	}
+
+	server_cert = (Signal__ServerCertificate__Certificate *)
+	              protobuf_c_message_unpack(
+		&signal__server_certificate__certificate__descriptor,
+		NULL, sender_cert->signer->certificate.len,
+		sender_cert->signer->certificate.data);
+	LOGr(!server_cert, "unid: protobuf-unpacking server certificate -> %p\n", server_cert);
+
+	if (!server_cert->has_id || !server_cert->has_key) {
+		LOG(ERROR, "unid's unpacked server certificate is missing fields\n");
+		r = SG_ERR_INVALID_MESSAGE;
+		goto done;
+	}
+
+/* TODO:
+      validator.validate(content.getSenderCertificate(), timestamp);
+
+      if (!MessageDigest.isEqual(content.getSenderCertificate().getKey().serialize(), staticKeyBytes)) {
+        throw new InvalidKeyException("Sender's certificate key does not match key used in message");
+      }
+
+      if (content.getSenderCertificate().getSender().equals(localAddress.getName()) &&
+          content.getSenderCertificate().getSenderDeviceId() == localAddress.getDeviceId())
+      {
+        throw new SelfSendException();
+      }
+*/
+
+	struct signal_protocol_address addr = {
+		sender_cert->sender,
+		strlen(sender_cert->sender),
+		sender_cert->senderdevice,
+	};
+
+	Signalservice__Envelope__Type type;
+	switch (dec_msg->type) {
+	case SIGNAL__UNIDENTIFIED_SENDER_MESSAGE__MESSAGE__TYPE__MESSAGE:
+		type = CIPHERTEXT;
+		break;
+	case SIGNAL__UNIDENTIFIED_SENDER_MESSAGE__MESSAGE__TYPE__PREKEY_MESSAGE:
+		type = PREKEY_BUNDLE;
+		break;
+	default:
+		LOG(ERROR, "unid's decrypted message type %d not understood\n",
+		    dec_msg->type);
+		r = SG_ERR_INVALID_MESSAGE;
+		goto done;
+	}
+
+	r = received_ciphertext_or_prekey_bundle2(ws, e, &addr, type,
+	                                          &dec_msg->content, ksc);
+	LOGr(r, "received_ciphertext_or_prekey_bundle2() -> %d\n", r);
+
+done:
+	if (server_cert)
+		protobuf_c_message_free_unpacked(&server_cert->base, NULL);
+	if (sender_cert)
+		protobuf_c_message_free_unpacked(&sender_cert->base, NULL);
+	if (dec_msg)
+		protobuf_c_message_free_unpacked(&dec_msg->base, NULL);
+	signal_buffer_free(dec_msg_buf);
+	if (msg)
+		signal__unidentified_sender_message__free_unpacked(msg, NULL);
+	return r;
+}
+
 static bool received_envelope(ws_s *ws, const Signalservice__Envelope *e,
                               struct ksc_ws *ksc)
 {
@@ -305,9 +698,10 @@ static bool received_envelope(ws_s *ws, const Signalservice__Envelope *e,
                                               struct ksc_ws *ksc);
 
 	static received_envelope_handler *const handlers[] = {
-		[CIPHERTEXT   ] = received_ciphertext_or_prekey_bundle,
-		[PREKEY_BUNDLE] = received_ciphertext_or_prekey_bundle,
-		[RECEIPT      ] = received_receipt,
+		[CIPHERTEXT         ] = received_ciphertext_or_prekey_bundle,
+		[PREKEY_BUNDLE      ] = received_ciphertext_or_prekey_bundle,
+		[RECEIPT            ] = received_receipt,
+		[UNIDENTIFIED_SENDER] = received_unidentified_sender,
 	};
 
 	if (!e->has_type) {
