@@ -14,6 +14,7 @@
 #include "ksc-ws.h"
 #include "SignalService.pb-c.h"
 
+#include <inttypes.h>
 #include <assert.h>
 #include <time.h>	/* ctime_r() */
 
@@ -28,14 +29,49 @@ static const struct ksc_log_context log_ctx = {
 #define LOG_(level,...)		LOGL_(level, &ksc->log, __VA_ARGS__)
 #define LOG(lvl,...)		LOGL(lvl, &ksc->log, __VA_ARGS__)
 
+static void print_attachment_pointer(int fd, Signalservice__AttachmentPointer *a, int indent)
+{
+	if (a->has_id)
+		dprintf(fd, "%*sid: %" PRIu64 "\n", indent+2, "", a->id);
+	if (a->contenttype)
+		dprintf(fd, "%*scontent type: %s\n", indent+2, "", a->contenttype);
+	if (a->has_key) {
+		dprintf(fd, "%*skey: ", indent+2, "");
+		ksc_dprint_hex(fd, a->key.data, a->key.len);
+		dprintf(fd, "\n");
+	}
+	if (a->has_size)
+		dprintf(fd, "%*ssize: %" PRIu32 "\n", indent+2, "", a->size);
+	if (a->has_thumbnail)
+		dprintf(fd, "%*shas thumbnail of size %zu\n", indent+2, "", a->thumbnail.len);
+	if (a->has_digest) {
+		dprintf(fd, "%*shas digest: ", indent+2, "");
+		ksc_dprint_hex(fd, a->digest.data, a->digest.len);
+		dprintf(fd, "\n");
+	}
+	if (a->filename)
+		dprintf(fd, "%*sfilename: %s\n", indent+2, "", a->filename);
+	if (a->has_flags)
+		dprintf(fd, "%*sflags: 0x%" PRIu32 "\n", indent+2, "", a->flags);
+	if (a->has_width)
+		dprintf(fd, "%*swidth: %" PRIu32 "\n", indent+2, "", a->width);
+	if (a->has_height)
+		dprintf(fd, "%*sheight: %" PRIu32 "\n", indent+2, "", a->height);
+	if (a->caption)
+		dprintf(fd, "%*scaption: %s\n", indent+2, "", a->caption);
+}
+
 static void print_data_message(int fd, Signalservice__DataMessage *e, int indent)
 {
 	if (e->base.n_unknown_fields)
 		dprintf(fd, "%*s# unknown fields: %u\n", indent, "", e->base.n_unknown_fields);
 	if (e->body)
 		dprintf(fd, "%*sbody: %s\n", indent, "", e->body);
-	if (e->n_attachments)
-		dprintf(fd, "%*sattachments: %zu\n", indent, "", e->n_attachments);
+	if (e->n_attachments) {
+		dprintf(fd, "%*s# attachments: %zu\n", indent, "", e->n_attachments);
+		for (size_t i=0; i<e->n_attachments; i++)
+			print_attachment_pointer(fd, e->attachments[i], indent+2);
+	}
 	if (e->group) {
 		struct _Signalservice__GroupContext *g = e->group;
 		dprintf(fd, "%*shas group info:\n", indent, "");
@@ -76,7 +112,7 @@ static void print_data_message(int fd, Signalservice__DataMessage *e, int indent
 		char buf[32];
 		time_t t = e->timestamp / 1000;
 		ctime_r(&t, buf);
-		dprintf(fd, "%*stimestamp: %s", indent, "", buf);
+		dprintf(fd, "%*stimestamp: %" PRIu64 " %s", indent, "", e->timestamp, buf);
 	}
 	if (e->quote)
 		dprintf(fd, "%*shas quote\n", indent, "");
@@ -104,7 +140,8 @@ static void print_sync_message(int fd, Signalservice__SyncMessage *e, int indent
 			char buf[32];
 			time_t t = e->sent->timestamp / 1000;
 			ctime_r(&t, buf);
-			dprintf(fd, "%*stimestamp: %s", indent, "", buf);
+			dprintf(fd, "%*stimestamp: %" PRIu64 " %s", indent, "",
+			        e->sent->timestamp, buf);
 		}
 		if (e->sent->message) {
 			dprintf(fd, "%*smessage:\n", indent, "");
@@ -114,7 +151,8 @@ static void print_sync_message(int fd, Signalservice__SyncMessage *e, int indent
 			char buf[32];
 			time_t t = e->sent->expirationstarttimestamp / 1000;
 			ctime_r(&t, buf);
-			dprintf(fd, "%*sexpiration start timestamp: %s", indent, "", buf);
+			dprintf(fd, "%*sexpiration start timestamp: %" PRIu64 " %s",
+			        indent, "", e->sent->expirationstarttimestamp, buf);
 		}
 		dprintf(fd, "%*s# unidentified status: %zu\n", indent, "", e->sent->n_unidentifiedstatus);
 		for (size_t i=0; i<e->sent->n_unidentifiedstatus; i++) {
@@ -141,7 +179,8 @@ static void print_sync_message(int fd, Signalservice__SyncMessage *e, int indent
 				char buf[32];
 				time_t t = e->read[i]->timestamp / 1000;
 				ctime_r(&t, buf);
-				dprintf(fd, "%*stimestamp: %s", indent+2, "", buf);
+				dprintf(fd, "%*stimestamp: %" PRIu64 " %s",
+				        indent+2, "", e->read[i]->timestamp, buf);
 			}
 		}
 	}
