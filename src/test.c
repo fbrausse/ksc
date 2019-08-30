@@ -145,8 +145,6 @@ static void print_sync_message(int fd, Signalservice__SyncMessage *e, int indent
 		dprintf(fd, "%*spadding: %zu bytes\n", indent, "", e->padding.len);
 	if (e->stickerpackoperation)
 		dprintf(fd, "%*s----- sticker pack op -----\n", indent, "");
-	if (e->contacts)
-		dprintf(fd, "%*s----- contacts -----\n", indent, "");
 	if (e->messagetimerread)
 		dprintf(fd, "%*s----- message timer read -----\n", indent, "");
 }
@@ -155,6 +153,7 @@ struct ksc_ctx {
 	struct ksc_log log;
 	const char *message;
 	const char *target;
+	Signalservice__SyncMessage__Request__Type sync_request;
 	bool end_session;
 };
 
@@ -293,6 +292,10 @@ static void send_get_profile(ws_s *s, struct ksc_ws *kws)
 		                            .body = ksc->message);
 		LOG(DEBUG, "send -> %d\n", r);
 	}
+	if (ksc->sync_request != SIGNALSERVICE__SYNC_MESSAGE__REQUEST__TYPE__UNKNOWN) {
+		int r = ksc_ws_sync_request(s, kws, ksc->sync_request, NULL, NULL);
+		LOG(DEBUG, "sync request -> %d\n", r);
+	}
 #else
 	(void)ksc;
 	(void)s;
@@ -408,17 +411,20 @@ int main(int argc, char **argv)
 	const char *message = NULL;
 	const char *target = DEFAULT_GET_PROFILE_NUMBER;
 	bool end_session = false;
-	for (int opt; (opt = getopt(argc, argv, ":c:C:efhm:p:t:v:")) != -1;)
+	Signalservice__SyncMessage__Request__Type sync_request =
+		SIGNALSERVICE__SYNC_MESSAGE__REQUEST__TYPE__UNKNOWN;
+	for (int opt; (opt = getopt(argc, argv, ":c:C:efhm:p:s:t:v:")) != -1;)
 		switch (opt) {
 		case 'c': cert_path = optarg; break;
 		case 'C': log.override_color = atoi(optarg); break;
 		case 'e': end_session = true; break;
 		case 'f': force = true; break;
 		case 'h':
-			fprintf(stderr, "usage: %s [-c CERT_PATH] [-C OVERRIDE_COLOR] [-f] [-m MESSAGE] [-t MSG_TARGET] [-p CLI_CONFIG_PATH] [-v ARG]\n", argv[0]);
+			fprintf(stderr, "usage: %s [-c CERT_PATH] [-C OVERRIDE_COLOR] [-f] [-m MESSAGE] [-t MSG_TARGET] [-s SYNC_TYPE] [-p CLI_CONFIG_PATH] [-v ARG]\n", argv[0]);
 			exit(0);
 		case 'm': message = optarg; break;
 		case 'p': cli_path = optarg; break;
+		case 's': sync_request = atoi(optarg); break;
 		case 't': target = optarg; break;
 		case 'v':
 			if (!parse_v(optarg, &log))
@@ -451,6 +457,7 @@ int main(int argc, char **argv)
 		.message = message,
 		.target = target,
 		.end_session = end_session,
+		.sync_request = sync_request,
 	};
 	struct json_store *js = NULL;
 	js = json_store_create(cli_path, &ctx.log);

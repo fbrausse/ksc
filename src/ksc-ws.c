@@ -843,7 +843,7 @@ on_sent_sync_transcript_result(const struct ksc_service_address *recipient,
                                struct ksc_signal_response *response,
                                unsigned result, void *udata)
 {
-	KSC_DEBUG(INFO, "on_sent_sync_transcript_result: %02x\n", result);
+	KSC_DEBUG(INFO, "on_sent_sync_transcript_result: 0x%02x\n", result);
 	(void)recipient;
 	(void)response;
 	(void)udata;
@@ -853,6 +853,87 @@ static int send_message(ws_s *ws, struct ksc_ws *ksc, const char *recipient,
                         const Signalservice__Content *content_message,
                         uint64_t timestamp,
                         struct ksc_ws_send_message_args args);
+
+static int send_sync_message(ws_s *ws, struct ksc_ws *ksc,
+                             Signalservice__SyncMessage *sync,
+                             struct ksc_ws_send_message_args args)
+{
+	Signalservice__Content content = SIGNALSERVICE__CONTENT__INIT;
+	content.syncmessage = sync;
+
+	const char *local_name = json_store_get_username(ksc->js);
+	assert(local_name);
+
+	uint64_t timestamp;
+	if (sync->sent && sync->sent->has_timestamp)
+		timestamp = sync->sent->timestamp;
+	else {
+		struct timeval tv;
+		gettimeofday(&tv, NULL);
+		timestamp = tv.tv_sec * 1000 + tv.tv_usec / 1000;
+	}
+
+	return send_message(ws, ksc, local_name, &content, timestamp, args);
+}
+
+struct sync_request_data {
+	struct ksc_ws *ksc;
+	Signalservice__SyncMessage__Request__Type type;
+	void (*handler)(struct ksc_signal_response *response,
+	                Signalservice__SyncMessage__Request__Type type,
+	                unsigned result, void *udata);
+	void *udata;
+};
+
+static void on_sync_request_response(const struct ksc_service_address *myself,
+                                     struct ksc_signal_response *response,
+                                     unsigned result, void *udata)
+{
+	struct sync_request_data *data = udata;
+	struct ksc_ws *ksc = data->ksc;
+	LOG(DEBUG, "on_sync_request_response %p, result: 0x%02x\n", data, result);
+	if (response) {
+		int fd = (ksc->args.log ? ksc->args.log : &KSC_DEFAULT_LOG)->fd;
+		dprintf(fd, "  response: %d %s\n", response->status,
+		        response->message);
+		for (size_t i=0; i<response->n_headers; i++)
+			dprintf(fd, "  header: %s\n", response->headers[i]);
+		dprintf(fd, "  body: %.*s\n", (int)response->body.len,
+		        response->body.data);
+	}
+	if (data->handler)
+		data->handler(response, data->type, result, data->udata);
+	free(data);
+	(void)myself;
+}
+
+int ksc_ws_sync_request(ws_s *ws, struct ksc_ws *ksc,
+                        Signalservice__SyncMessage__Request__Type type,
+                        void (*handler)(struct ksc_signal_response *response,
+                                        Signalservice__SyncMessage__Request__Type type,
+                                        unsigned result, void *udata),
+                        void *udata)
+{
+	Signalservice__SyncMessage__Request request =
+		SIGNALSERVICE__SYNC_MESSAGE__REQUEST__INIT;
+	request.type = type;
+
+	Signalservice__SyncMessage sync =
+		SIGNALSERVICE__SYNC_MESSAGE__INIT;
+	sync.request = &request;
+
+	struct sync_request_data *data;
+	data = ksc_malloc(sizeof(*data)); /* TODO: data gets free'd by send_message()? */
+	data->ksc = ksc; /* ksc gets REF'ed by send_message() */
+	data->type = type;
+	data->handler = handler;
+	data->udata = udata;
+
+	struct ksc_ws_send_message_args args = {
+		NULL, false, on_sync_request_response, data,
+	};
+	return send_sync_message(ws, ksc, &sync, args);
+}
 
 static int send_sync_transcript(struct send_message_data *d)
 {
@@ -892,16 +973,10 @@ static int send_sync_transcript(struct send_message_data *d)
 	Signalservice__SyncMessage sync = SIGNALSERVICE__SYNC_MESSAGE__INIT;
 	sync.sent = &sent;
 
-	Signalservice__Content sync_content = SIGNALSERVICE__CONTENT__INIT;
-	sync_content.syncmessage = &sync;
-
-	const char *local_name = json_store_get_username(ksc->js);
-	assert(local_name);
 	struct ksc_ws_send_message_args args = {
 		NULL, false, on_sent_sync_transcript_result, NULL,
 	};
-	int r = send_message(d->data2.ws, ksc, local_name, &sync_content,
-	                     d->data2.timestamp, args);
+	int r = send_sync_message(d->data2.ws, ksc, &sync, args);
 
 	signalservice__content__free_unpacked(content, NULL);
 

@@ -53,6 +53,13 @@ int ksc_ws_send_message(ws_s *ws, struct ksc_ws *kws, const char *recipient,
 	ksc_ws_send_message(ws, kws, target, \
 	                    (struct ksc_ws_send_message_args){ __VA_ARGS__ });
 
+int ksc_ws_sync_request(ws_s *ws, struct ksc_ws *kws,
+                        Signalservice__SyncMessage__Request__Type type,
+                        void (*handler)(struct ksc_signal_response *response,
+                                        Signalservice__SyncMessage__Request__Type type,
+                                        unsigned result, void *udata),
+                        void *udata);
+
 struct ksc_ws_connect_service_args {
 	bool (*on_receipt)(ws_s *, struct ksc_ws *,
 	                   const Signalservice__Envelope *e);
