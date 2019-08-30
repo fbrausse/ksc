@@ -804,6 +804,7 @@ struct send_message_data2 {
 	uint8_t *content;
 	size_t content_padded_sz;
 	size_t content_sz;
+	bool may_need_sync;
 };
 
 struct send_message_data {
@@ -1517,7 +1518,7 @@ static int send_message_final(const char *recipient, size_t recipient_len,
 		addr.device_id = *b;
 		r = encrypt_for(&addr, ksc, data.content,
 		                data.content_padded_sz, message_tail);
-		LOGr(r, "encrypt_for device %" PRId32 "-> %d\n", addr.device_id, r);
+		LOGr(r, "encrypt_for device %" PRId32 " -> %d\n", addr.device_id, r);
 		if (!r)
 			message_tail = &(*message_tail)->next;
 		if (r)
@@ -1566,7 +1567,8 @@ static int send_message_final(const char *recipient, size_t recipient_len,
 	cb_data->recipient.name_len = recipient_len;
 	cb_data->data2 = data;
 	cb_data->is_recipient_udpate = false; /* TODO */
-	cb_data->result.needs_sync = json_store_is_multi_device(ksc->js);
+	cb_data->result.needs_sync = data.may_need_sync &&
+	                             json_store_is_multi_device(ksc->js);
 
 	static char *headers[] = {
 		"Content-Type: application/json",
@@ -1695,7 +1697,7 @@ static int send_message(ws_s *ws, struct ksc_ws *ksc, const char *recipient,
 
 	struct send_message_data2 data2 = {
 		ws, timestamp, args, content_packed, content_padded_sz,
-		content_sz,
+		content_sz, content->datamessage ? true : false,
 	};
 	content_packed = NULL; /* transferred ownership */
 	if (no_session.n) {
