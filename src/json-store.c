@@ -576,7 +576,7 @@ static int sess_store_session_func(const signal_protocol_address *address,
 	};
 	struct kjson_value entry = {
 		.type = KJSON_VALUE_OBJECT,
-		.o = { .data = entries, .n = ARRAY_SIZE(entries), },
+		.o = { .data = entries, .n = KSC_ARRAY_SIZE(entries), },
 	};
 	struct kjson_value e = json_value_dup(&entry);
 	(kjson_array_push_back)(&st->a, e);
@@ -757,7 +757,7 @@ static int prek_store_pre_key(uint32_t pre_key_id, uint8_t *record,
 	};
 	(kjson_array_push_back)(&st->a, json_value_dup(&(struct kjson_value){
 		.type = KJSON_VALUE_OBJECT,
-		.o = { .n = ARRAY_SIZE(entries), .data = entries },
+		.o = { .n = KSC_ARRAY_SIZE(entries), .data = entries },
 	}));
 	int r = json_store_save(js);
 	if (r < 0)
@@ -886,7 +886,7 @@ static int sipk_store_signed_pre_key(uint32_t signed_pre_key_id,
 	};
 	(kjson_array_push_back)(&st->a, json_value_dup(&(struct kjson_value){
 		.type = KJSON_VALUE_OBJECT,
-		.o = { .n = ARRAY_SIZE(entries), .data = entries },
+		.o = { .n = KSC_ARRAY_SIZE(entries), .data = entries },
 	}));
 	int r = json_store_save(js);
 	if (r < 0)
@@ -1075,7 +1075,7 @@ static int idk_save_identity(const signal_protocol_address *address,
 		};
 		e = (kjson_array_push_back)(&tk->a, json_value_dup(&(struct kjson_value){
 			.type = KJSON_VALUE_OBJECT,
-			.o = { .n = ARRAY_SIZE(entries), .data = entries },
+			.o = { .n = KSC_ARRAY_SIZE(entries), .data = entries },
 		}));
 	}
 	struct kjson_value *idk = kjson_get(e, "identityKey");

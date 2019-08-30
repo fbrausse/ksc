@@ -364,7 +364,7 @@ static signal_buffer * decrypt(const uint8_t cipher_key[static UNIDENTIFIED_CIPH
 
 	r = signal_decrypt(ksc->ctx, &decrypted, SG_CIPHER_AES_CTR_NOPADDING,
 	                   cipher_key, UNIDENTIFIED_CIPHER_KEY_SZ,
-	                   iv, ARRAY_SIZE(iv),
+	                   iv, KSC_ARRAY_SIZE(iv),
 	                   ciphertext, ciphertext_sz - UNIDENTIFIED_MSG_MAC_SZ);
 	LOGr(r, "signal_decrypt() -> %d\n", r);
 	if (r) {
@@ -649,7 +649,7 @@ static bool received_envelope(ws_s *ws, const Signalservice__Envelope *e,
 	}
 
 	received_envelope_handler *handler;
-	if (e->type >= ARRAY_SIZE(handlers) || !(handler = handlers[e->type])) {
+	if (e->type >= KSC_ARRAY_SIZE(handlers) || !(handler = handlers[e->type])) {
 		LOG(ERROR, "cannot handle envelope type %d!\n", e->type);
 		return false;
 	}

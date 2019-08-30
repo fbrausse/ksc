@@ -821,7 +821,7 @@ static int send_message_final(const char *recipient, size_t recipient_len,
 	                        .size = json_c.len,
 	                        .body = json_c.data,
 	                        .headers = headers,
-	                        .n_headers = ARRAY_SIZE(headers),
+	                        .n_headers = KSC_ARRAY_SIZE(headers),
 	                        .on_response = on_send_message_response,
 	                        .on_unsubscribe = on_send_message_unsubscribe,
 	                        .udata = cb_data);

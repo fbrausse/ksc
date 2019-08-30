@@ -18,7 +18,7 @@
 
 #include <kjson.h>
 
-#define ARRAY_SIZE(...)	(sizeof(__VA_ARGS__)/sizeof(*(__VA_ARGS__)))
+#define KSC_ARRAY_SIZE(...)	(sizeof(__VA_ARGS__)/sizeof(*(__VA_ARGS__)))
 
 #define KSC_STR(x)	#x
 #define KSC_XSTR(x)	KSC_STR(x)
@@ -29,7 +29,7 @@ extern size_t ksc_alloc_total;
 
 static inline void ksc_count_alloc(size_t n)
 {
-	for (size_t i=0; i<ARRAY_SIZE(ksc_alloc_buckets); i++)
+	for (size_t i=0; i<KSC_ARRAY_SIZE(ksc_alloc_buckets); i++)
 		if (n < (size_t)1 << i) {
 			ksc_alloc_buckets[i]++;
 			break;

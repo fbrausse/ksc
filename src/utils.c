@@ -132,7 +132,7 @@ bool ksc_log_lvl_parse(const char *lvl, enum ksc_log_lvl *res)
 		*res = KSC_LOG_NONE;
 		return true;
 	}
-	for (size_t i=0; i<ARRAY_SIZE(lvls); i++)
+	for (size_t i=0; i<KSC_ARRAY_SIZE(lvls); i++)
 		if (lvls[i] && !strcmp(lvl, lvls[i])) {
 			*res = i;
 			return true;
@@ -152,7 +152,7 @@ static void ksc_log_desc_msg(struct ksc_log *log, enum ksc_log_lvl level,
 		[KSC_LOG_DEBUG] =      "92", /* bright green */
 	};
 #undef BOLD
-	level = MIN(level,ARRAY_SIZE(lvls)-1);
+	level = MIN(level,KSC_ARRAY_SIZE(lvls)-1);
 	const char *desc = context && context->desc ? context->desc : "";
 	int fd = log->fd;
 	if (log->override_color > 0 || (!log->override_color && isatty(fd))) {

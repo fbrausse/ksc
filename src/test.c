@@ -523,7 +523,7 @@ int main(int argc, char **argv)
 	json_store_destroy(js);
 
 #ifdef KSC_DEBUG_MEM_USAGE
-	for (unsigned i=0; i<ARRAY_SIZE(ksc_alloc_buckets); i++) {
+	for (unsigned i=0; i<KSC_ARRAY_SIZE(ksc_alloc_buckets); i++) {
 		size_t n = ksc_alloc_buckets[i];
 		if (n)
 			LOGL(DEBUG, &ctx.log, "alloc < 2^%2u: %zu\n", i, n);
