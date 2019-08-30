@@ -591,7 +591,7 @@ static void on_prekey_response(http_s *h)
 			if (s.len && fiobj_json2obj(&response, s.data, s.len)) {
 				r = process_hash_pk_bundle(response, pr->name,
 				                           pr->name_len, ksc);
-				LOGr(r, "handle_hash_pk_bundle() -> %d\n", r);
+				LOGr(r, "process_hash_pk_bundle() -> %d\n", r);
 				fiobj_free(response);
 			} else {
 				LOG(ERROR, "error JSON-decoding pre-key response: ");
@@ -602,20 +602,25 @@ static void on_prekey_response(http_s *h)
 				}
 			}
 			struct ksc_device_array devices;
-			if (!r)
+			if (!r) {
 				r = known_target_devices(&devices, pr->name,
 				                         pr->name_len, ksc);
-			if (!r) {
+				LOGr(r < 0, "known_target_devices() -> %d\n", r);
+			}
+			if (r >= 0) {
 				r = send_message_final(pr->name, pr->name_len,
 				                       ksc, &devices, pr->data);
 				LOGr(r, "send_message_final() -> %d\n", r);
 			}
+			if (!r)
+				pr->received = true;
 		}
 		if (h->status == 413) {
 			LOG(ERROR, "server refuses to send us the pre-key data...\n");
 		}
 		if (r) {
 			/* TODO: retry or delete data2 contents */
+			LOGr(r, "on_prekey_response() processed with code %d\n", r);
 		}
 	}
 	if (!pr->requested) {
@@ -636,6 +641,14 @@ static void on_prekey_finish(http_settings_s *s)
 	LOG(DEBUG, "on_prekey_finish()\n");
 	free(pr->name);
 	free(pr->no_session.ids);
+	if (!pr->received && pr->data.args.on_sent) {
+		struct ksc_service_address addr = {
+			.name = pr->name,
+			.name_len = pr->name_len,
+		};
+		pr->data.args.on_sent(0, pr->data.timestamp, &addr, NULL,
+		                      pr->data.args.udata);
+	}
 	ksignal_ctx_unref(ksc);
 	free(pr);
 }

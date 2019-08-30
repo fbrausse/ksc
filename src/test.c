@@ -279,8 +279,12 @@ static void on_sent(size_t n_failed, uint64_t timestamp,
                     const struct ksc_device_array *devs, void *udata)
 {
 	struct ksc_ctx *ksc = udata;
-	LOG(NOTE, "on_sent to %.*s: failed to build session to %zu of %zu devices\n",
-	    (int)addr->name_len, addr->name, n_failed, devs->n);
+	if (devs)
+		LOG(NOTE, "on_sent to %.*s: failed to build session to %zu of %zu devices\n",
+		    (int)addr->name_len, addr->name, n_failed, devs->n);
+	else
+		LOG(ERROR, "on_sent to %.*s: failed to send messages, timeout?\n",
+		    (int)addr->name_len, addr->name);
 }
 
 static void send_get_profile(ws_s *s, struct ksc_ws *kws)

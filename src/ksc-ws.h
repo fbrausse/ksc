@@ -48,6 +48,8 @@ struct ksc_ws_send_message_args {
 	const void *const *attachments;
 	size_t n_attachments;*/
 
+	/* if sending the request failed or a timeout was reached waiting for
+	 * a reply, devices will be NULL. */
 	void (*on_sent)(size_t n_devices_failed, uint64_t timestamp,
 	                const struct ksc_service_address *recipient,
 	                const struct ksc_device_array *devices,
