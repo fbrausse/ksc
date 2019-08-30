@@ -274,6 +274,15 @@ static int recv_messages(ws_s *ws, struct ksc_signal_response *r, void *udata)
 	(void)ws;
 }
 
+static void on_sent(size_t n_failed, uint64_t timestamp,
+                    const struct ksc_service_address *addr,
+                    const struct ksc_device_array *devs, void *udata)
+{
+	struct ksc_ctx *ksc = udata;
+	LOG(NOTE, "on_sent to %.*s: failed to build session to %zu of %zu devices\n",
+	    (int)addr->name_len, addr->name, n_failed, devs->n);
+}
+
 static void send_get_profile(ws_s *s, struct ksc_ws *kws)
 {
 	struct ksc_ctx *ksc = ksc_ws_get_udata(kws);
@@ -299,7 +308,9 @@ static void send_get_profile(ws_s *s, struct ksc_ws *kws)
 	if (ksc->message && ksc->target) {
 		int r = ksc_ws_send_message(s, kws, ksc->target,
 		                            .end_session = ksc->end_session,
-		                            .body = ksc->message);
+		                            .body = ksc->message,
+		                            .on_sent = on_sent,
+		                            .udata = ksc);
 		LOG(DEBUG, "send -> %d\n", r);
 	}
 	if (ksc->sync_request != SIGNALSERVICE__SYNC_MESSAGE__REQUEST__TYPE__UNKNOWN) {

@@ -34,6 +34,13 @@ struct ksc_service_address {
 #define KSC_SEND_MESSAGE_RESULT_TIMEOUT    (1 << 3)
 #define KSC_SEND_MESSAGE_RESULT_UNHANDLED  (1 << 5)
 
+struct ksc_device_array {
+	int32_t *ids;
+	size_t n;
+};
+
+#define KSC_DEVICE_ARRAY_INIT	{ NULL, 0 }
+
 struct ksc_ws_send_message_args {
 	const char *body;
 	bool end_session;
@@ -41,9 +48,15 @@ struct ksc_ws_send_message_args {
 	const void *const *attachments;
 	size_t n_attachments;*/
 
+	void (*on_sent)(size_t n_devices_failed, uint64_t timestamp,
+	                const struct ksc_service_address *recipient,
+	                const struct ksc_device_array *devices,
+	                void *udata);
+
 	void (*on_result)(const struct ksc_service_address *recipient,
 	                  struct ksc_signal_response *response,
 	                  unsigned result, void *udata);
+
 	void *udata;
 };
 

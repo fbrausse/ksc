@@ -118,7 +118,7 @@ int ksc_ws_sync_request(ws_s *ws, struct ksc_ws *ksc,
 	data->udata = udata;
 
 	struct ksc_ws_send_message_args args = {
-		NULL, false, on_sync_request_response, data,
+		NULL, false, NULL, on_sync_request_response, data,
 	};
 	return send_sync_message(ws, ksc, &sync, args);
 }
@@ -248,7 +248,7 @@ static int send_sync_transcript(struct send_message_data *d)
 	sync.sent = &sent;
 
 	struct ksc_ws_send_message_args args = {
-		NULL, false, on_sent_sync_transcript_result, NULL,
+		NULL, false, NULL, on_sent_sync_transcript_result, NULL,
 	};
 	int r = send_sync_message(d->data2.ws, ksc, &sync, args);
 
@@ -489,13 +489,6 @@ static int process_hash_pk_bundle(FIOBJ response, const char *name,
  * store.
  * -------------------------------------------------------------------------- */
 
-struct device_array {
-	int32_t *ids;
-	size_t n;
-};
-
-#define DEVICE_ARRAY_INIT	{ NULL, 0 }
-
 #define DEFAULT_DEVICE_ID	1
 
 /* not exported by libsignal-protocol-c :/ */
@@ -504,7 +497,7 @@ void signal_unlock(signal_context *context);
 
 /* returns a (negative) signal error or the number of devices placed at
  * *devices. Remember to free *devices. */
-static int known_target_devices(struct device_array *res,
+static int known_target_devices(struct ksc_device_array *res,
                                 const char *recipient,
                                 size_t recipient_len,
                                 const struct ksc_ws *ksc)
@@ -567,7 +560,7 @@ done:
 struct prekey_request_data {
 	char *name;
 	size_t name_len;
-	struct device_array no_session;
+	struct ksc_device_array no_session;
 	struct ksc_ws *ksc;
 	bool requested;
 	bool received;
@@ -577,7 +570,8 @@ struct prekey_request_data {
 };
 
 static int send_message_final(const char *recipient, size_t recipient_len,
-                              struct ksc_ws *ksc, struct device_array *devices,
+                              struct ksc_ws *ksc,
+                              struct ksc_device_array *devices,
                               struct send_message_data2 data);
 
 static void on_prekey_response(http_s *h)
@@ -607,7 +601,7 @@ static void on_prekey_response(http_s *h)
 					dprintf(fd, "\n");
 				}
 			}
-			struct device_array devices;
+			struct ksc_device_array devices;
 			if (!r)
 				r = known_target_devices(&devices, pr->name,
 				                         pr->name_len, ksc);
@@ -647,7 +641,7 @@ static void on_prekey_finish(http_settings_s *s)
 }
 
 static intptr_t get_pre_keys(const char *recipient, size_t recipient_len,
-                             struct device_array *devices,
+                             struct ksc_device_array *devices,
                              struct ksc_ws *ksc,
                              struct send_message_data2 data2)
 {
@@ -794,7 +788,8 @@ done:
 #define SEND_MESSAGE_RESPONSE_TIMEOUT	10 /* seconds */
 
 static int send_message_final(const char *recipient, size_t recipient_len,
-                              struct ksc_ws *ksc, struct device_array *devices,
+                              struct ksc_ws *ksc,
+                              struct ksc_device_array *devices,
                               struct send_message_data2 data)
 {
 	int r;
@@ -823,8 +818,11 @@ static int send_message_final(const char *recipient, size_t recipient_len,
 		LOGr(r, "encrypt_for device %" PRId32 " -> %d\n", addr.device_id, r);
 		if (!r)
 			message_tail = &(*message_tail)->next;
-		if (r)
-			*a++ = *b; /* record failed encryption */
+		if (r) {
+			/* record failed encryption */
+			*b = *a;
+			*a++ = addr.device_id;
+		}
 		if (r == SG_ERR_NO_SESSION)
 			r = 0;
 		if (r)
@@ -876,7 +874,7 @@ static int send_message_final(const char *recipient, size_t recipient_len,
 	static char *headers[] = {
 		"Content-Type: application/json",
 	};
-	REF(cb_data);
+	REF(cb_data); /* for .on_unsubscribe */
 	r = ksc_ws_send_request(data.ws, "PUT", path,
 	                        .size = json_c.len,
 	                        .body = json_c.data,
@@ -892,6 +890,14 @@ static int send_message_final(const char *recipient, size_t recipient_len,
 		REF(cb_data);
 		fio_run_every(SEND_MESSAGE_RESPONSE_TIMEOUT * 1000, 1,
 		              on_send_message_response_timeout, cb_data, NULL);
+		if (data.args.on_sent) {
+			struct ksc_service_address rec = {
+				.name = (char *)recipient,
+				.name_len = recipient_len,
+			};
+			data.args.on_sent(n_failed, data.timestamp, &rec,
+			                  devices, data.args.udata);
+		}
 	}
 
 	fiobj_free(json);
@@ -939,8 +945,8 @@ static void prepare_data_message(Signalservice__DataMessage *data,
 	data->has_timestamp = true;
 }
 
-static int known_target_devices_(struct device_array *all,
-                                 struct device_array *no_session,
+static int known_target_devices_(struct ksc_device_array *all,
+                                 struct ksc_device_array *no_session,
                                  const char *recipient, size_t recipient_len,
                                  struct ksc_ws *ksc)
 {
@@ -1001,8 +1007,8 @@ static int send_message(ws_s *ws, struct ksc_ws *ksc, const char *recipient,
 	int r = 0;
 	size_t recipient_len = strlen(recipient);
 
-	struct device_array all = DEVICE_ARRAY_INIT;
-	struct device_array no_session = DEVICE_ARRAY_INIT;
+	struct ksc_device_array all = KSC_DEVICE_ARRAY_INIT;
+	struct ksc_device_array no_session = KSC_DEVICE_ARRAY_INIT;
 	r = known_target_devices_(&all, &no_session, recipient, recipient_len, ksc);
 	if (r < 0)
 		goto done;
