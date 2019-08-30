@@ -35,6 +35,17 @@ static const struct ksc_log_context log_ctx = {
 
 #include "ksc-ws-private.h"
 
+void ksignal_ctx_destroy(struct ksc_ws *ksc)
+{
+	LOG(DEBUG, "destroying ksc_ws\n");
+	assert(!ksc->ref_counted.cnt);
+	signal_protocol_store_context_destroy(ksc->psctx);
+	signal_context_destroy(ksc->ctx);
+	ksc_free(ksc->url);
+	pthread_mutex_destroy(&ksc->signal_mtx);
+	ksc_free(ksc);
+}
+
 void ksc_print_envelope(const Signalservice__Envelope *e, int fd, bool detail)
 {
 	if (e->has_type) {

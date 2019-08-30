@@ -72,6 +72,8 @@ struct ksc_ws {
 	pthread_mutex_t signal_mtx;
 };
 
+void ksignal_ctx_destroy(struct ksc_ws *ksc);
+
 static inline void ksignal_ctx_ref(struct ksc_ws *ksc)
 {
 	REF(ksc);
@@ -81,13 +83,7 @@ static inline void ksignal_ctx_unref(struct ksc_ws *ksc)
 {
 	if (UNREF(ksc))
 		return;
-	LOG(DEBUG, "destroying ksc_ws\n");
-	assert(!ksc->ref_counted.cnt);
-	signal_protocol_store_context_destroy(ksc->psctx);
-	signal_context_destroy(ksc->ctx);
-	ksc_free(ksc->url);
-	pthread_mutex_destroy(&ksc->signal_mtx);
-	ksc_free(ksc);
+	ksignal_ctx_destroy(ksc);
 }
 
 #endif
