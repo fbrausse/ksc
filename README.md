@@ -24,6 +24,8 @@ branch at the linked URL if not specified otherwise):
     ```
     make lib # should print "Detected the OpenSSL library, setting HAVE_OPENSSL"
     ```
+    Pass `OPENSSL_CFLAGS` and `OPENSSL_LDFLAGS` to override the default settings
+    found by its `makefile` as required.
   - kjson: https://github.com/fbrausse/kjson
     ```
     make libkjson.a
