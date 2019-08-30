@@ -18,7 +18,7 @@
 
 static const struct ksc_log_context log_ctx = {
 	.desc = "ws-send",
-	.color = "31",
+	.color = "35",
 };
 
 /* shortcuts */
