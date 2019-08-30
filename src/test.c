@@ -154,6 +154,7 @@ static void print_sync_message(int fd, Signalservice__SyncMessage *e, int indent
 struct ksc_ctx {
 	struct ksc_log log;
 	const char *message;
+	const char *target;
 	bool end_session;
 };
 
@@ -285,9 +286,9 @@ static void send_get_profile(ws_s *s, struct ksc_ws *kws)
 	ksc_ws_send_request(s, "GET", "/v1/messages/",
 	                    .on_response = recv_messages,
 	                    .udata = ksc);
-#elif defined(DEFAULT_GET_PROFILE_NUMBER)
-	if (ksc->message) {
-		int r = ksc_ws_send_message(s, kws, DEFAULT_GET_PROFILE_NUMBER,
+#elif 1
+	if (ksc->message && ksc->target) {
+		int r = ksc_ws_send_message(s, kws, ksc->target,
 		                            .end_session = ksc->end_session,
 		                            .body = ksc->message);
 		LOG(DEBUG, "send -> %d\n", r);
@@ -391,6 +392,9 @@ static bool parse_v(char *arg, struct ksc_log *log)
 #ifndef KSIGNAL_SERVER_CERT
 # define KSIGNAL_SERVER_CERT	NULL
 #endif
+#ifndef DEFAULT_GET_PROFILE_NUMBER
+# define DEFAULT_GET_PROFILE_NUMBER	NULL
+#endif
 
 #define DIE(code,...) do { fprintf(stderr, __VA_ARGS__); exit(code); } while (0)
 
@@ -402,18 +406,20 @@ int main(int argc, char **argv)
 	const char *cert_path = KSIGNAL_SERVER_CERT;
 	bool force = false;
 	const char *message = NULL;
+	const char *target = DEFAULT_GET_PROFILE_NUMBER;
 	bool end_session = false;
-	for (int opt; (opt = getopt(argc, argv, ":c:C:efhm:p:v:")) != -1;)
+	for (int opt; (opt = getopt(argc, argv, ":c:C:efhm:p:t:v:")) != -1;)
 		switch (opt) {
 		case 'c': cert_path = optarg; break;
 		case 'C': log.override_color = atoi(optarg); break;
 		case 'e': end_session = true; break;
 		case 'f': force = true; break;
 		case 'h':
-			fprintf(stderr, "usage: %s [-c CERT_PATH] [-C OVERRIDE_COLOR] [-f] [-m MESSAGE] [-p CLI_CONFIG_PATH] [-v ARG]\n", argv[0]);
+			fprintf(stderr, "usage: %s [-c CERT_PATH] [-C OVERRIDE_COLOR] [-f] [-m MESSAGE] [-t MSG_TARGET] [-p CLI_CONFIG_PATH] [-v ARG]\n", argv[0]);
 			exit(0);
 		case 'm': message = optarg; break;
 		case 'p': cli_path = optarg; break;
+		case 't': target = optarg; break;
 		case 'v':
 			if (!parse_v(optarg, &log))
 				DIE(1,"error parsing option '-v %s'\n", optarg);
@@ -443,6 +449,7 @@ int main(int argc, char **argv)
 	struct ksc_ctx ctx = {
 		.log = log,
 		.message = message,
+		.target = target,
 		.end_session = end_session,
 	};
 	struct json_store *js = NULL;
