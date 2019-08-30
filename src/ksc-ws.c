@@ -337,6 +337,7 @@ static signal_buffer * decrypt(const uint8_t cipher_key[static UNIDENTIFIED_CIPH
 		return NULL;
 	}
 
+	signal_buffer *decrypted = NULL;
 	signal_buffer *our_mac = NULL;
 	void *hmac = NULL;
 	int r;
@@ -361,7 +362,6 @@ static signal_buffer * decrypt(const uint8_t cipher_key[static UNIDENTIFIED_CIPH
 
 	static const uint8_t iv[16];
 
-	signal_buffer *decrypted = NULL;
 	r = signal_decrypt(ksc->ctx, &decrypted, SG_CIPHER_AES_CTR_NOPADDING,
 	                   cipher_key, UNIDENTIFIED_CIPHER_KEY_SZ,
 	                   iv, ARRAY_SIZE(iv),
@@ -381,7 +381,7 @@ static signal_buffer *
 sealed_session_decrypt(const Signal__UnidentifiedSenderMessage *msg,
                        uint64_t timestamp, struct ksc_ws *ksc)
 {
-	int r = 0;
+	ratchet_identity_key_pair *our_identity = NULL;
 	ec_public_key *ephemeral = NULL;
 	ec_public_key *static_key = NULL;
 	signal_buffer *ephemeral_buf = NULL;
@@ -392,6 +392,7 @@ sealed_session_decrypt(const Signal__UnidentifiedSenderMessage *msg,
 	uint8_t *salt = NULL;
 	uint8_t *static_salt = NULL;
 	uint8_t *static_keys = NULL;
+	int r;
 
 	if (!msg->has_ephemeralpublic || !msg->has_encryptedstatic ||
 	    !msg->has_encryptedmessage) {
@@ -406,7 +407,6 @@ sealed_session_decrypt(const Signal__UnidentifiedSenderMessage *msg,
 	                       msg->ephemeralpublic.len, ksc->ctx);
 	LOGr(r, "curve_decode_point() -> %d\n", r);
 
-	ratchet_identity_key_pair *our_identity;
 	r = signal_protocol_identity_get_key_pair(ksc->psctx, &our_identity);
 	LOGr(r, "signal_protocol_identity_get_key_pair() -> %d\n", r);
 
@@ -483,6 +483,7 @@ static int received_unidentified_sender(ws_s *ws,
 	Signal__UnidentifiedSenderMessage__Message *dec_msg = NULL;
 	Signal__SenderCertificate__Certificate *sender_cert = NULL;
 	Signal__ServerCertificate__Certificate *server_cert = NULL;
+	int r;
 
 	if (e->content.len < 1)
 		return SG_ERR_INVALID_VERSION;
@@ -495,9 +496,8 @@ static int received_unidentified_sender(ws_s *ws,
 
 	msg = signal__unidentified_sender_message__unpack(NULL, e->content.len-1,
 	                                                  data+1);
-	int r;
+	LOGr(!msg, "protobuf-unpacking unidentified-sender message -> %p\n", msg);
 	if (!msg) {
-		LOG(ERROR, "protobuf-unpacking unidentified-sender message\n");
 		r = SG_ERR_INVALID_PROTO_BUF;
 		goto done;
 	}
@@ -511,8 +511,10 @@ static int received_unidentified_sender(ws_s *ws,
 		NULL, signal_buffer_len(dec_msg_buf),
 		signal_buffer_data(dec_msg_buf));
 	LOGr(!dec_msg, "protobuf-unpacking decrypted unidentified-sender message -> %p\n", dec_msg);
-	if (!dec_msg)
+	if (!dec_msg) {
+		r = SG_ERR_INVALID_PROTO_BUF;
 		goto done;
+	}
 
 	KSC_DEBUG(NOTE, "decoded unid message:\n");
 	if (dec_msg->has_type)
