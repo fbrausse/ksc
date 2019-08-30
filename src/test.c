@@ -133,8 +133,18 @@ static void print_sync_message(int fd, Signalservice__SyncMessage *e, int indent
 		dprintf(fd, "%*s----- groups -----\n", indent, "");
 	if (e->request)
 		dprintf(fd, "%*s----- request -----\n", indent, "");
-	if (e->read)
+	if (e->read) {
 		dprintf(fd, "%*s----- # read: %zu -----\n", indent, "", e->n_read);
+		for (size_t i=0; i<e->n_read; i++) {
+			dprintf(fd, "%*ssender: %s\n", indent+2, "", e->read[i]->sender);
+			if (e->read[i]->has_timestamp) {
+				char buf[32];
+				time_t t = e->read[i]->timestamp / 1000;
+				ctime_r(&t, buf);
+				dprintf(fd, "%*stimestamp: %s", indent+2, "", buf);
+			}
+		}
+	}
 	if (e->blocked)
 		dprintf(fd, "%*s----- blocked -----\n", indent, "");
 	if (e->verified)
@@ -339,11 +349,11 @@ static bool on_content(ws_s *ws, struct ksc_ws *kws,
 		Signalservice__SyncMessage *s = c->syncmessage;
 		if (s->base.n_unknown_fields)
 			return false;
-		if (s->contacts || s->groups || s->request || s->read ||
+		if (s->contacts || s->groups || s->request ||
 		    s->blocked || s->verified || s->configuration ||
 		    s->stickerpackoperation || s->messagetimerread)
 			return false;
-		if (s->sent)
+		if (s->sent || s->read)
 			return true;
 		return false;
 	}
