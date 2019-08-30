@@ -76,6 +76,7 @@ COMMON_OBJS = \
 	ksignal-ws.o \
 	utils.o \
 	ksc-ws.o \
+	ws-send.o \
 	crypto.o \
 	json-store.o \
 	$(CRYPT_OBJS) \
