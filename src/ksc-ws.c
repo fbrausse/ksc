@@ -252,6 +252,8 @@ static int received_receipt(ws_s *ws, const Signalservice__Envelope *e,
 	return r ? 0 : -1;
 }
 
+/* Magic constants from SealedSessionCipher.java in libsignal-metadata-java */
+
 #define UNIDENTIFIED_CIPHERTEXT_VERSION		1
 #define UNIDENTIFIED_HKDF_MESSAGE_VERSION	3
 #define UNIDENTIFIED_SALT_PREFIX		"UnidentifiedDelivery"
@@ -315,22 +317,26 @@ done:
 	return r;
 }
 
-int signal_hmac_sha256_init(signal_context *context, void **hmac_context, const uint8_t *key, size_t key_len);
-int signal_hmac_sha256_update(signal_context *context, void *hmac_context, const uint8_t *data, size_t data_len);
-int signal_hmac_sha256_final(signal_context *context, void *hmac_context, signal_buffer **output);
+/* libsignal-protocol-c defines these but hides them from the public API. */
+int signal_hmac_sha256_init(signal_context *context, void **hmac_context,
+                            const uint8_t *key, size_t key_len);
+int signal_hmac_sha256_update(signal_context *context, void *hmac_context,
+                              const uint8_t *data, size_t data_len);
+int signal_hmac_sha256_final(signal_context *context, void *hmac_context,
+                             signal_buffer **output);
 void signal_hmac_sha256_cleanup(signal_context *context, void *hmac_context);
 
 int signal_decrypt(signal_context *context,
-        signal_buffer **output,
-        int cipher,
-        const uint8_t *key, size_t key_len,
-        const uint8_t *iv, size_t iv_len,
-        const uint8_t *ciphertext, size_t ciphertext_len);
+                   signal_buffer **output,
+                   int cipher,
+                   const uint8_t *key, size_t key_len,
+                   const uint8_t *iv, size_t iv_len,
+                   const uint8_t *ciphertext, size_t ciphertext_len);
 
-static signal_buffer * decrypt(const uint8_t cipher_key[static UNIDENTIFIED_CIPHER_KEY_SZ],
-                               const uint8_t mac_key[static UNIDENTIFIED_MAC_KEY_SZ],
-                               uint8_t *ciphertext, size_t ciphertext_sz,
-                               struct ksc_ws *ksc)
+static signal_buffer *
+decrypt(const uint8_t cipher_key[static UNIDENTIFIED_CIPHER_KEY_SZ],
+        const uint8_t mac_key[static UNIDENTIFIED_MAC_KEY_SZ],
+        uint8_t *ciphertext, size_t ciphertext_sz, struct ksc_ws *ksc)
 {
 	if (ciphertext_sz < UNIDENTIFIED_MSG_MAC_SZ) {
 		LOG(ERROR, "unidentified-sender message static ciphertext too short for MAC\n");
