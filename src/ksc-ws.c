@@ -941,6 +941,12 @@ static void on_send_message_response_timeout(void *udata)
 	send_message_data_unref(data);
 }
 
+#if 0 /* TODO: handle */
+[note ] ksignal-ws: ws response, status: 409 Conflict (id: 1548988872866205)
+  body size: 40
+[note ] ksc-ws: message send response: 409 Conflict: {"missingDevices":[],"extraDevices":[2]}
+#endif
+
 /* 0: to unsubscribe, other to stay subscribed */
 static int on_send_message_response(ws_s *ws,
                                     struct ksc_signal_response *response,
