@@ -71,7 +71,7 @@ void ksc_print_envelope(const Signalservice__Envelope *e, int fd, bool detail)
 		char buf[32];
 		time_t t = e->timestamp / 1000;
 		ctime_r(&t, buf);
-		dprintf(fd, "  timestamp: %s", buf);
+		dprintf(fd, "  timestamp: %" PRIu64 " %s", e->timestamp, buf);
 	}
 	if (e->has_legacymessage) {
 		dprintf(fd, "  has encrypted legacy message of size %zu%s\n",
@@ -97,7 +97,8 @@ void ksc_print_envelope(const Signalservice__Envelope *e, int fd, bool detail)
 		char buf[32];
 		time_t t = e->servertimestamp / 1000;
 		ctime_r(&t, buf);
-		dprintf(fd, "  server timestamp: %s", buf);
+		dprintf(fd, "  server timestamp: %" PRIu64 "%s",
+		        e->servertimestamp, buf);
 	}
 }
 
