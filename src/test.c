@@ -30,7 +30,8 @@ static const struct ksc_log_context log_ctx = {
 
 static void print_data_message(int fd, Signalservice__DataMessage *e, int indent)
 {
-	dprintf(fd, "%*s# unknown fields: %u\n", indent, "", e->base.n_unknown_fields);
+	if (e->base.n_unknown_fields)
+		dprintf(fd, "%*s# unknown fields: %u\n", indent, "", e->base.n_unknown_fields);
 	if (e->body)
 		dprintf(fd, "%*sbody: %s\n", indent, "", e->body);
 	if (e->n_attachments)
@@ -94,7 +95,8 @@ static void print_data_message(int fd, Signalservice__DataMessage *e, int indent
 
 static void print_sync_message(int fd, Signalservice__SyncMessage *e, int indent)
 {
-	dprintf(fd, "%*s# unknown fields: %u\n", indent, "", e->base.n_unknown_fields);
+	if (e->base.n_unknown_fields)
+		dprintf(fd, "%*s# unknown fields: %u\n", indent, "", e->base.n_unknown_fields);
 	if (e->sent) {
 		dprintf(fd, "%*s----- sent -----\n", indent, "");
 		dprintf(fd, "%*sdestination: %s\n", indent, "", e->sent->destination);
