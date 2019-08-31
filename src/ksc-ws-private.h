@@ -12,8 +12,6 @@
 #ifndef KSC_WS_PRIVATE_H
 #define KSC_WS_PRIVATE_H
 
-#include <assert.h>
-#include <stdatomic.h>	/* atomic_init() */
 #include <inttypes.h>	/* PRI* macros */
 
 #include <pthread.h>	/* pthread_mutex */
@@ -27,38 +25,48 @@
 #define RECEIPT             SIGNALSERVICE__ENVELOPE__TYPE__RECEIPT
 #define UNIDENTIFIED_SENDER SIGNALSERVICE__ENVELOPE__TYPE__UNIDENTIFIED_SENDER
 
-/* ref-counted structs */
-
-#ifndef KSC_WARN_UNUSED
-# ifdef __GNUC__
-#  define KSC_WARN_UNUSED	__attribute__((warn_unused_result))
-# else
-#  define KSC_WARN_UNUSED
-# endif
-#endif
-
-struct ref_counted {
-	_Atomic size_t cnt;
+struct object {
+	REF_COUNTED;
+	void (*fini)(struct object *);
 };
 
-static inline struct ref_counted * ref(struct ref_counted *ref)
+static inline void obj_init(struct object *v, void (*fini)(struct object *))
 {
-	ref->cnt++;
-	return ref;
+	REF_INIT(v);
+	v->fini = fini;
 }
 
-KSC_WARN_UNUSED
-static inline size_t unref(struct ref_counted *ref)
+static inline void obj_ref(struct object *v)
 {
-	assert(ref->cnt);
-	return --ref->cnt;
+	KSC_DEBUG(INFO, "obj_ref(%p)\n", v);
+	REF(v);
 }
 
-#define REF_COUNTED	struct ref_counted ref_counted
-#define REF_INIT(ptr,v)	atomic_init(&(ptr)->ref_counted.cnt, (v))
-/* only use directly when you know what you're doing: no destructor invoked */
-#define REF(ptr)	ref(&(ptr)->ref_counted)
-#define UNREF(ptr)	unref(&(ptr)->ref_counted)
+static inline void obj_unref(struct object *v)
+{
+	KSC_DEBUG(INFO, "obj_unref(%p)\n", v);
+	if (!UNREF(v))
+		v->fini(v);
+}
+
+#define OBJECT			struct object object_base
+#define OBJ_OF(ptr)		&(ptr)->object_base
+#define OBJ_INIT(ptr,fini)	obj_init(OBJ_OF(ptr), fini)
+#define OBJ_REF(ptr)		obj_ref(OBJ_OF(ptr))
+#define OBJ_UNREF(ptr)		obj_unref(OBJ_OF(ptr))
+#define OBJ_TO(obj,type) \
+	(type *)((char *)(obj) - offsetof(type, object_base))
+
+/* helper to automate .on_finish by calling OBJ_UNREF */
+static inline int obj_run_every(int timeout_ms, int repetitions,
+                                void (*on_timeout)(struct object *udata),
+                                struct object *udata)
+{
+	obj_ref(udata);
+	return fio_run_every(timeout_ms, repetitions,
+	                     (void (*)(void *))on_timeout, udata,
+	                     (void (*)(void *))obj_unref);
+}
 
 struct ksc_ws {
 	REF_COUNTED;

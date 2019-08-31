@@ -15,6 +15,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdarg.h>	/* va_list */
+#include <stdatomic.h>	/* atomic_init() */
+#include <assert.h>
 
 #include <kjson.h>
 
@@ -115,6 +117,39 @@ MMC_DEF(ld,long double)
 #define CLAMP(x,low,high) \
 	_Generic((x)+(intmax_t)0, KSC__MMC_GENERIC_BODY(ksc_clamp))(x,low,high)
 
+/* ref-counted structs */
+
+#ifndef KSC_WARN_UNUSED
+# ifdef __GNUC__
+#  define KSC_WARN_UNUSED	__attribute__((warn_unused_result))
+# else
+#  define KSC_WARN_UNUSED
+# endif
+#endif
+
+struct ref_counted {
+	_Atomic size_t cnt;
+};
+
+static inline struct ref_counted * ref(struct ref_counted *ref)
+{
+	ref->cnt++;
+	return ref;
+}
+
+KSC_WARN_UNUSED
+static inline size_t unref(struct ref_counted *ref)
+{
+	assert(ref->cnt);
+	return --ref->cnt;
+}
+
+#define REF_COUNTED	struct ref_counted ref_counted
+#define REF_INIT(ptr)	atomic_init(&(ptr)->ref_counted.cnt, 1)
+/* only use directly when you know what you're doing: no destructor invoked */
+#define REF(ptr)	ref(&(ptr)->ref_counted)
+#define UNREF(ptr)	unref(&(ptr)->ref_counted)
+
 /* logging */
 
 enum ksc_log_lvl {
@@ -128,7 +163,14 @@ enum ksc_log_lvl {
 
 bool ksc_log_lvl_parse(const char *lvl, enum ksc_log_lvl *res);
 
+/* .log needs to be allocated dynamically, because the on_exit handlers
+ * (including those stopping for fio_timed_run_every()) run after main()
+ * returns. The reason is that fio_lib_destroy(void) (called by
+ * _dl_fini() e.g. on SIGINT) is declared with
+ * __attribute__((destructor)). We still need access to this log at that
+ * point, so make it refcnted. */
 struct ksc_log {
+	REF_COUNTED;
 	enum ksc_log_lvl max_lvl;
 	int fd;
 	struct ksc_log__context_lvl {
@@ -139,7 +181,7 @@ struct ksc_log {
 	int override_color;
 };
 
-#define KSC_DEFAULT_LOG	(struct ksc_log){ INT_MAX, STDERR_FILENO, NULL, 0 }
+#define KSC_DEFAULT_LOG	(struct ksc_log){ {}, INT_MAX, STDERR_FILENO, NULL, 0 }
 
 void ksc_log_fini(struct ksc_log *log);
 
@@ -151,23 +193,23 @@ struct ksc_log_context {
 bool ksc_log_prints(enum ksc_log_lvl lvl, const struct ksc_log *log,
                     const struct ksc_log_context *context);
 
-void ksc_vlog(enum ksc_log_lvl level, struct ksc_log *log,
+void ksc_vlog(enum ksc_log_lvl level, const struct ksc_log *log,
               const struct ksc_log_context *context, const char *fmt,
               va_list ap);
 
 __attribute__((format(printf,4,5)))
-void ksc_log(enum ksc_log_lvl level, struct ksc_log *log,
+void ksc_log(enum ksc_log_lvl level, const struct ksc_log *log,
              const struct ksc_log_context *context, const char *fmt, ...);
 
 /* log and context may be empty */
 #define KSC_LOG_(level, log, msg_context, ...) \
 	ksc_log(level, \
-	        ((struct { struct ksc_log *ptr; }){log}.ptr), \
+	        ((struct { const struct ksc_log *ptr; }){log}.ptr), \
 	        ((struct { const struct ksc_log_context *ptr; }){msg_context}.ptr),\
 	        __VA_ARGS__)
 /* lvl is the * abbreviation of KSC_LOG_*, log and context may be empty */
-#define KSC_LOG(lvl, log_ctx, msg_context, ...) \
-	KSC_LOG_(KSC_LOG_ ## lvl, log_ctx, msg_context, __VA_ARGS__)
+#define KSC_LOG(lvl, log, msg_context, ...) \
+	KSC_LOG_(KSC_LOG_ ## lvl, log, msg_context, __VA_ARGS__)
 
 #define KSC_DEBUGL(lvl, log, ...) \
 	KSC_LOG(lvl, log, \

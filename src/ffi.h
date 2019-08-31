@@ -16,13 +16,13 @@
 
 /* logging */
 
-struct ksc_log;
+struct ksc_ffi_log;
 
-struct ksc_log * ksc_ffi_log_create(int fd, const char *level);
-void             ksc_ffi_log_destroy(struct ksc_log *log);
-int              ksc_ffi_log_restrict_context(struct ksc_log *log,
-                                              const char *desc,
-                                              const char *level);
+struct ksc_ffi_log * ksc_ffi_log_create(int fd, const char *level);
+void                 ksc_ffi_log_destroy(struct ksc_ffi_log *log);
+int                  ksc_ffi_log_restrict_context(struct ksc_ffi_log *log,
+                                                  const char *desc,
+                                                  const char *level);
 
 /* service connection */
 
@@ -53,7 +53,7 @@ struct ksc_ffi * ksc_ffi_start(const char *json_store_path,
 	               struct ksc_ffi_data *c),
 	void (*on_open)(const struct ksc_ffi *),
 	void (*on_close)(intptr_t uuid, void *udata),
-	struct ksc_log *log,
+	struct ksc_ffi_log *log,
 	const char *server_cert_path,
 	int on_close_do_reconnect,
 	void *udata

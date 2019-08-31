@@ -120,10 +120,12 @@ static const char *const lvls[] = {
 
 void ksc_log_fini(struct ksc_log *log)
 {
+	KSC_LOG(DEBUG, log,, "log_fini %p\n", log);
 	for (struct ksc_log__context_lvl *it, *jt = log->context_lvls; (it = jt);) {
 		jt = it->next;
 		ksc_free(it);
 	}
+	log->context_lvls = NULL;
 }
 
 bool ksc_log_lvl_parse(const char *lvl, enum ksc_log_lvl *res)
@@ -140,7 +142,7 @@ bool ksc_log_lvl_parse(const char *lvl, enum ksc_log_lvl *res)
 	return false;
 }
 
-static void ksc_log_desc_msg(struct ksc_log *log, enum ksc_log_lvl level,
+static void ksc_log_desc_msg(const struct ksc_log *log, enum ksc_log_lvl level,
                              const struct ksc_log_context *context)
 {
 #define BOLD	"1;"
@@ -177,15 +179,17 @@ bool ksc_log_prints(enum ksc_log_lvl lvl, const struct ksc_log *log,
 	enum ksc_log_lvl max_lvl = log->max_lvl;
 	if (context && context->desc)
 		for (const struct ksc_log__context_lvl *it = log->context_lvls;
-		     it; it = it->next)
+		     it; it = it->next) {
+			assert(it->desc);
 			if (!strcmp(context->desc, it->desc)) {
 				max_lvl = it->max_lvl;
 				break;
 			}
+		}
 	return lvl <= max_lvl;
 }
 
-void ksc_vlog(enum ksc_log_lvl level, struct ksc_log *log,
+void ksc_vlog(enum ksc_log_lvl level, const struct ksc_log *log,
               const struct ksc_log_context *context, const char *fmt,
               va_list ap)
 {
@@ -203,7 +207,7 @@ void ksc_vlog(enum ksc_log_lvl level, struct ksc_log *log,
 }
 
 __attribute__((format(printf,4,5)))
-void ksc_log(enum ksc_log_lvl level, struct ksc_log *log,
+void ksc_log(enum ksc_log_lvl level, const struct ksc_log *log,
              const struct ksc_log_context *context, const char *fmt, ...)
 {
 	va_list ap;

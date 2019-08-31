@@ -319,11 +319,13 @@ static void on_sent(size_t n_failed, uint64_t timestamp,
 {
 	struct ksc_ctx *ksc = udata;
 	if (devs)
-		LOG(NOTE, "on_sent to %.*s: failed to build session to %zu of %zu devices\n",
-		    (int)addr->name_len, addr->name, n_failed, devs->n);
+		LOG(NOTE, "on_sent to %.*s at %" PRIu64 ": failed to build "
+		          "session to %zu of %zu devices\n",
+		    (int)addr->name_len, addr->name, timestamp, n_failed, devs->n);
 	else
-		LOG(ERROR, "on_sent to %.*s: failed to send messages, timeout?\n",
-		    (int)addr->name_len, addr->name);
+		LOG(ERROR, "on_sent to %.*s at %" PRIu64 ": failed to send "
+		           "messages, timeout?\n",
+		    (int)addr->name_len, addr->name, timestamp);
 }
 
 static void send_get_profile(ws_s *s, struct ksc_ws *kws)
@@ -516,13 +518,15 @@ int main(int argc, char **argv)
 		return 1;
 	}
 
-	struct ksc_ctx ctx = {
+	static struct ksc_ctx ctx;
+	ctx = (struct ksc_ctx){
 		.log = log,
 		.message = message,
 		.target = target,
 		.end_session = end_session,
 		.sync_request = sync_request,
 	};
+	REF_INIT(&ctx.log);
 	struct json_store *js = NULL;
 	js = json_store_create(cli_path, &ctx.log);
 	LOGL_(js ? KSC_LOG_DEBUG : KSC_LOG_ERROR, &ctx.log, "js: %p\n", (void *)js);
@@ -560,22 +564,6 @@ int main(int argc, char **argv)
 
 	fio_start(.threads=1);
 
-	r = json_store_save(js);
-	LOGL_(r ? KSC_LOG_ERROR : KSC_LOG_DEBUG, &ctx.log,
-	      "json_store_save returned %d\n", r);
-	if (!r) {
-		r = json_store_load(js);
-		LOGL_(r ? KSC_LOG_DEBUG : KSC_LOG_ERROR, &ctx.log,
-		      "json_store_load returned %d\n", r);
-		r = !r;
-	}
-	if (!r) {
-		r = json_store_save(js);
-		LOGL_(r ? KSC_LOG_ERROR : KSC_LOG_DEBUG, &ctx.log,
-		      "json_store_save returned %d\n", r);
-	}
-	json_store_destroy(js);
-
 #ifdef KSC_DEBUG_MEM_USAGE
 	for (unsigned i=0; i<KSC_ARRAY_SIZE(ksc_alloc_buckets); i++) {
 		size_t n = ksc_alloc_buckets[i];
@@ -584,9 +572,10 @@ int main(int argc, char **argv)
 	}
 	LOGL(DEBUG, &ctx.log, "total alloced: %zu\n", ksc_alloc_total);
 #endif
+	json_store_unref(js);
 
-
-	ksc_log_fini(&ctx.log);
+	if (!UNREF(&ctx.log))
+		ksc_log_fini(&ctx.log);
 
 	return 0;
 }

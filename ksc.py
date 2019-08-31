@@ -22,17 +22,17 @@ class ksc_ffi:
 		pass
 
 	def __init__(self):
-		self._ksc = CDLL('libksc.so')
+		self._ksc = CDLL('./libksc.so')
 
-		ksc_log_p = POINTER(ksc_ffi.log)
+		ksc_ffi_log_p = POINTER(ksc_ffi.log)
 		ksc_envelope_p = POINTER(ksc_ffi.envelope)
 		ksc_data_p = POINTER(ksc_ffi.data)
 		ksc_p = POINTER(ksc_ffi.socket)
 
 		for k, v in {
-			'log_create': (ksc_log_p, (c_int, c_char_p)),
-			'log_destroy': (c_void_p, (ksc_log_p,)),
-			'log_restrict_context': (c_int, (ksc_log_p, c_char_p, c_char_p)),
+			'log_create': (ksc_ffi_log_p, (c_int, c_char_p)),
+			'log_unref': (c_void_p, (ksc_ffi_log_p,)),
+			'log_restrict_context': (c_int, (ksc_ffi_log_p, c_char_p, c_char_p)),
 			'envelope_get_source': (c_char_p, (ksc_envelope_p,)),
 			'envelope_get_source_device_id': (c_int64, (ksc_envelope_p,)),
 			'envelope_get_timestamp': (c_int64, (ksc_envelope_p,)),
@@ -45,7 +45,7 @@ class ksc_ffi:
 			                  CFUNCTYPE(c_int, ksc_p, ksc_envelope_p, ksc_data_p), # on_data
 			                  CFUNCTYPE(None, ksc_p), # on_open
 			                  CFUNCTYPE(None, c_void_p, c_void_p), # on_close
-			                  ksc_log_p,
+			                  ksc_ffi_log_p,
 			                  c_char_p, # server_cert_path
 			                  c_int, # on_close_do_reconnect
 			                  c_void_p)),
@@ -62,18 +62,27 @@ class ksc_ffi:
 			 getattr(self._ksc, k2).argtypes) = v
 			setattr(self, k, getattr(self._ksc, k2))
 
+class log:
+	def __init__(self, fd, level, restricted_contexts = {}):
+		self.fd = fd
+		self.level = level
+		self.restricted_contexts = restricted_contexts
+
+	def __del__(self):
+		print('log __del__')
+
 class ksc:
 	def __init__(self):
 		self._ffi = ksc_ffi()
 
 	# level is one of 'none', 'error', 'warn', 'info', 'note', 'debug'
-	def log_create(self, fd, level):
+	def _log_create(self, fd, level):
 		return self._ffi.log_create(fd, level.encode())
 
-	def log_destroy(self, log):
-		self._ffi.log_destroy(log)
+	def _log_unref(self, log):
+		self._ffi.log_unref(log)
 
-	def log_restrict_context(self, log, desc, level):
+	def _log_restrict_context(self, log, desc, level):
 		return self._ffi.log_restrict_context(log, desc.encode(),
 		                                      level.encode())
 
@@ -84,14 +93,23 @@ class ksc:
 	def start(self, json_store_path, server_cert_path, log = None,
 	          on_receipt = None, on_data = None, on_open = None,
 	          on_close = None, on_close_do_reconnect = False, data = None):
-		return self._ffi.start(json_store_path.encode(),
-		                       self._ffi.start.argtypes[1](ksc._zero(on_receipt)),
-		                       self._ffi.start.argtypes[2](ksc._zero(on_data)),
-		                       self._ffi.start.argtypes[3](ksc._zero(on_open)),
-		                       self._ffi.start.argtypes[4](ksc._zero(on_close)),
-		                       log,
-		                       server_cert_path.encode(),
-		                       on_close_do_reconnect, data)
+		if log is not None:
+			ffi_log = self._log_create(log.fd, log.level)
+			for desc, level in log.restricted_contexts.items():
+				self._log_restrict_context(ffi_log, desc, level)
+		else:
+			ffi_log = None
+		r = self._ffi.start(json_store_path.encode(),
+		                    self._ffi.start.argtypes[1](ksc._zero(on_receipt)),
+		                    self._ffi.start.argtypes[2](ksc._zero(on_data)),
+		                    self._ffi.start.argtypes[3](ksc._zero(on_open)),
+		                    self._ffi.start.argtypes[4](ksc._zero(on_close)),
+		                    ffi_log,
+		                    server_cert_path.encode(),
+		                    on_close_do_reconnect, data)
+		if ffi_log is not None:
+			self._log_unref(ffi_log)
+		return r
 
 	def stop(self, k):
 		self._ffi.stop(k)
@@ -102,10 +120,9 @@ class ksc:
 		                              data)
 
 """
-from ksc import ksc
+from ksc import ksc, log
 k = ksc()
-log = k.log_create(2, 'note')
-sock = k.start(LOCAL_PATH, 'share/whisper.store.asn1', log = log)
+sock = k.start(LOCAL_PATH, 'share/whisper.store.asn1', log = log(2, 'debug'))
 k.send_message(sock, NUMBER, 'hi from Python')
 k.stop(sock)
 """

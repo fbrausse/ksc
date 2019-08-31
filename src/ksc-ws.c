@@ -43,6 +43,10 @@ void ksignal_ctx_destroy(struct ksc_ws *ksc)
 	signal_context_destroy(ksc->ctx);
 	ksc_free(ksc->url);
 	pthread_mutex_destroy(&ksc->signal_mtx);
+	if (ksc->js)
+		json_store_unref(ksc->js);
+	if (!UNREF(ksc->args.log))
+		ksc_log_fini(ksc->args.log);
 	ksc_free(ksc);
 }
 
@@ -791,13 +795,12 @@ static void ctx_unlock(void *user_data)
 }
 
 static struct ksc_ws * ksignal_ctx_create(struct json_store *js,
-                                          struct ksc_log *log)
+                                          const struct ksc_log *log)
 {
 	struct ksc_ws *ksc = NULL;
 
 	ksc = ksc_calloc(1, sizeof(*ksc));
-	REF_INIT(ksc, 0);
-	ksignal_ctx_ref(ksc);
+	REF_INIT(ksc);
 
 	pthread_mutexattr_t attr;
 	pthread_mutexattr_init(&attr);
@@ -832,6 +835,7 @@ static struct ksc_ws * ksignal_ctx_create(struct json_store *js,
 		goto fail;
 	}
 
+	json_store_ref(js);
 	json_store_protocol_store_init(ksc->psctx, js);
 
 	ksc->js = js;
@@ -890,6 +894,7 @@ struct ksc_ws * (ksc_ws_connect_service)(struct json_store *js,
 		return NULL;
 	}
 	ksc->args = args;
+	REF(args.log);
 	intptr_t uuid = ksc_ws_connect_raw(ksc->url,
 		.on_open = on_open,
 		.handle_request = handle_request,

@@ -86,6 +86,7 @@ static void kjson_object_remove(struct kjson_object *obj, struct kjson_object_en
 }
 
 struct json_store {
+	REF_COUNTED;
 	struct kjson_value cfg;
 	int fd;
 	char *path;
@@ -258,12 +259,39 @@ bool json_store_load(struct json_store *js)
 	return r;
 }
 
-void json_store_destroy(struct json_store *js)
+static void json_store_destroy(struct json_store *js)
 {
 	json_value_fini(&js->cfg);
 	ksc_free(js->path);
 	close(js->fd); /* also releases lockf(3p) lock */
+	assert(!js->ref_counted.cnt);
+	if (!UNREF(js->log))
+		ksc_log_fini(js->log);
 	ksc_free(js);
+}
+
+void json_store_ref(struct json_store *js) { REF(js); }
+
+void json_store_unref(struct json_store *js)
+{
+	if (UNREF(js))
+		return;
+
+	int r = json_store_save(js);
+	LOG_(r ? KSC_LOG_ERROR : KSC_LOG_DEBUG,
+	      "json_store_save returned %d\n", r);
+	if (!r) {
+		r = json_store_load(js);
+		LOG_(r ? KSC_LOG_DEBUG : KSC_LOG_ERROR,
+		     "json_store_load returned %d\n", r);
+		r = !r;
+	}
+	if (!r) {
+		r = json_store_save(js);
+		LOG_(r ? KSC_LOG_ERROR : KSC_LOG_DEBUG,
+		     "json_store_save returned %d\n", r);
+	}
+	json_store_destroy(js);
 }
 
 struct json_store * json_store_create(const char *path, struct ksc_log *log)
@@ -283,6 +311,7 @@ struct json_store * json_store_create(const char *path, struct ksc_log *log)
 		LOGL(ERROR, log, "calloc: %s\n", strerror(errno));
 		goto fail;
 	}
+	REF(log);
 	js->fd = fd;
 	js->log = log;
 	js->path = strdup(path);
@@ -292,14 +321,16 @@ struct json_store * json_store_create(const char *path, struct ksc_log *log)
 	}
 	if (!json_store_load(js)) {
 		LOG(ERROR, "json_store_load: failed\n");
-		json_store_destroy(js);
-		js = NULL;
+		goto fail_1;
 	}
+	REF_INIT(js);
 	return js;
 
 fail_1:
-	ksc_free(js);
+	json_store_destroy(js);
+	js = NULL;
 fail:
+	ksc_free(js);
 	close(fd);
 	return NULL;
 }

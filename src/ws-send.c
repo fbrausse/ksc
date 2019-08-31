@@ -167,7 +167,7 @@ struct send_message_data2 {
 };
 
 struct send_message_data {
-	REF_COUNTED;
+	OBJECT;
 	struct ksc_ws *ksc;
 	struct ksc_service_address recipient;
 
@@ -186,17 +186,6 @@ struct send_message_data {
 	struct send_message_data2 data2;
 	bool is_recipient_udpate;
 };
-
-static void send_message_data_unref(struct send_message_data *data)
-{
-	if (UNREF(data))
-		return;
-	ksc_free(data->data2.content);
-	ksc_free(data->recipient.relay);
-	ksc_free(data->recipient.name);
-	ksignal_ctx_unref(data->ksc);
-	ksc_free(data);
-}
 
 static void
 on_sent_sync_transcript_result(const struct ksc_service_address *recipient,
@@ -279,15 +268,14 @@ static void handle_send_message_result(struct ksc_signal_response *response,
 	data->result.cb_called = true;
 }
 
-static void on_send_message_response_timeout(void *udata)
+static void on_send_message_response_timeout(struct object *udata)
 {
-	struct send_message_data *data = udata;
+	struct send_message_data *data = OBJ_TO(udata, struct send_message_data);
 	struct ksc_ws *ksc = data->ksc;
 	LOG(NOTE, "send message response timeout for recipient %.*s, result: %02x\n",
 	    (int)data->recipient.name_len, data->recipient.name, data->result_u8);
 	data->result.timeout = true;
 	handle_send_message_result(NULL, data);
-	send_message_data_unref(data);
 }
 
 #if 0 /* TODO: handle */
@@ -356,11 +344,16 @@ done:
 	(void)ws;
 }
 
-static void on_send_message_unsubscribe(void *udata)
+static void send_message_data_fini(struct object *obj)
 {
-	struct send_message_data *data = udata;
+	struct send_message_data *data = OBJ_TO(obj, struct send_message_data);
+	KSC_DEBUG(INFO, "send_message_data_fini()\n");
 	handle_send_message_result(NULL, data);
-	send_message_data_unref(data);
+	ksc_free(data->data2.content);
+	ksc_free(data->recipient.relay);
+	ksc_free(data->recipient.name);
+	ksignal_ctx_unref(data->ksc);
+	ksc_free(data);
 }
 
 /* --------------------------------------------------------------------------
@@ -875,6 +868,7 @@ static int send_message_final(const char *recipient, size_t recipient_len,
 	LOG(DEBUG, "sending JSON: %.*s\n", (int)json_c.len, json_c.data);
 
 	struct send_message_data *cb_data = ksc_calloc(1, sizeof(*cb_data));
+	OBJ_INIT(cb_data, send_message_data_fini); /* initial ref for .on_unsubscribe */
 	ksignal_ctx_ref(ksc);
 	cb_data->ksc = ksc;
 	cb_data->recipient.name = strndup(recipient, recipient_len);
@@ -887,22 +881,21 @@ static int send_message_final(const char *recipient, size_t recipient_len,
 	static char *headers[] = {
 		"Content-Type: application/json",
 	};
-	REF(cb_data); /* for .on_unsubscribe */
+	assert(!ksc->args.log->context_lvls);
 	r = ksc_ws_send_request(data.ws, "PUT", path,
 	                        .size = json_c.len,
 	                        .body = json_c.data,
 	                        .headers = headers,
 	                        .n_headers = KSC_ARRAY_SIZE(headers),
 	                        .on_response = on_send_message_response,
-	                        .on_unsubscribe = on_send_message_unsubscribe,
+	                        .on_unsubscribe = (void (*)(void *))obj_unref,
 	                        .udata = cb_data);
 	if (r)
 		cb_data = NULL;
 
 	if (!r) {
-		REF(cb_data);
-		fio_run_every(SEND_MESSAGE_RESPONSE_TIMEOUT * 1000, 1,
-		              on_send_message_response_timeout, cb_data, NULL);
+		obj_run_every(SEND_MESSAGE_RESPONSE_TIMEOUT * 1000, 1,
+		              on_send_message_response_timeout, OBJ_OF(cb_data));
 		if (data.args.on_sent) {
 			struct ksc_service_address rec = {
 				.name = (char *)recipient,

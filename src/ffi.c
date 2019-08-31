@@ -8,22 +8,35 @@
 
 #include "SignalService.pb-c.h"
 
-struct ksc_log * ksc_ffi_log_create(int fd, const char *level)
+/* .log.context_lvls contains dynamically allocated .desc strings */
+struct ksc_ffi_log {
+	struct ksc_log log;
+};
+
+struct ksc_ffi_log * ksc_ffi_log_create(int fd, const char *level)
 {
-	struct ksc_log log = { .fd = fd };
-	if (!ksc_log_lvl_parse(level, &log.max_lvl))
+	struct ksc_ffi_log log = { { .fd = fd } };
+	if (!ksc_log_lvl_parse(level, &log.log.max_lvl))
 		return NULL;
+	REF_INIT(&log.log);
 	return ksc_memdup(&log, sizeof(log));
 }
 
-void ksc_ffi_log_destroy(struct ksc_log *log)
+void ksc_ffi_log_destroy(struct ksc_ffi_log *log)
 {
-	if (log)
-		ksc_log_fini(log);
-	ksc_free(log);
+	if (!log)
+		return;
+	KSC_DEBUG(DEBUG, "ffi: log-unref with count %zu\n", log->log.ref_counted.cnt);
+	if (!UNREF(&log->log)) {
+		for (struct ksc_log__context_lvl *c = log->log.context_lvls; c;
+		     c = c->next)
+			free((char *)c->desc);
+		ksc_log_fini(&log->log);
+		ksc_free(log);
+	}
 }
 
-int ksc_ffi_log_restrict_context(struct ksc_log *log, const char *desc,
+int ksc_ffi_log_restrict_context(struct ksc_ffi_log *log, const char *desc,
                                  const char *level)
 {
 	if (!log)
@@ -34,11 +47,11 @@ int ksc_ffi_log_restrict_context(struct ksc_log *log, const char *desc,
 	if (!ksc_log_lvl_parse(level, &max_lvl))
 		return -EINVAL;
 	struct ksc_log__context_lvl cl = {
-		.next = log->context_lvls,
-		.desc = desc,
+		.next = log->log.context_lvls,
+		.desc = strdup(desc),
 		.max_lvl = max_lvl,
 	};
-	log->context_lvls = ksc_memdup(&cl, sizeof(cl));
+	log->log.context_lvls = ksc_memdup(&cl, sizeof(cl));
 	return 0;
 }
 
@@ -103,7 +116,7 @@ struct ksc_ffi {
 	ws_s *ws;
 	struct json_store *js;
 	struct ksc_ws *kws;
-	struct ksc_log *log;
+	struct ksc_ffi_log *log;
 	pthread_t thread;
 	int (*on_receipt)(const struct ksc_ffi *,
 	                  struct ksc_ffi_envelope *e);
@@ -159,9 +172,8 @@ static void ffi_on_open(ws_s *ws, struct ksc_ws *kws)
 
 static void ffi_destroy(struct ksc_ffi *ffi)
 {
-	ksc_ffi_log_destroy(ffi->log);
 	if (ffi->js)
-		json_store_destroy(ffi->js);
+		json_store_unref(ffi->js);
 	ksc_free(ffi);
 }
 
@@ -187,7 +199,7 @@ struct ksc_ffi * ksc_ffi_start(const char *json_store_path,
 	               struct ksc_ffi_data *c),
 	void (*on_open)(const struct ksc_ffi *),
 	void (*on_close)(intptr_t uuid, void *udata),
-	struct ksc_log *log,
+	struct ksc_ffi_log *log,
 	const char *server_cert_path,
 	int on_close_do_reconnect,
 	void *udata
@@ -204,11 +216,10 @@ struct ksc_ffi * ksc_ffi_start(const char *json_store_path,
 	struct ksc_ffi *ffi = ksc_memdup(&ffi_, sizeof(ffi_));
 	if (!ffi)
 		return NULL;
-	ffi->js = json_store_create(json_store_path, log);
+	ffi->js = json_store_create(json_store_path, &log->log);
 	if (!ffi->js)
 		goto error;
-	ffi->log = ksc_memdup(ffi->log ? ffi->log : &KSC_DEFAULT_LOG,
-	                      sizeof(*ffi->log));
+	ffi->log = log;
 	struct ksc_ws *kws = ksc_ws_connect_service(ffi->js,
 		.on_receipt = ffi_on_receipt,
 		.on_content = ffi_on_content,
@@ -216,7 +227,7 @@ struct ksc_ffi * ksc_ffi_start(const char *json_store_path,
 		.on_close = ffi_on_close,
 		.udata = ffi,
 		.signal_log_ctx = { "signal ctx", "95" /* bright magenta */ },
-		.log = log,
+		.log = &log->log,
 		.server_cert_path = server_cert_path,
 		.on_close_do_reconnect = on_close_do_reconnect,
 	);

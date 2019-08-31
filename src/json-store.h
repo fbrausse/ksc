@@ -18,9 +18,11 @@ struct json_store;
 struct ksc_log;
 
 struct json_store * json_store_create(const char *path, struct ksc_log *log);
-void                json_store_destroy(struct json_store *);
+// void                json_store_destroy(struct json_store *);
 int                 json_store_save(struct json_store *);
 bool                json_store_load(struct json_store *);
+void                json_store_ref(struct json_store *);
+void                json_store_unref(struct json_store *);
 
 const char * json_store_get_username(const struct json_store *);
 bool         json_store_get_device_id(const struct json_store *, int32_t *ret);
