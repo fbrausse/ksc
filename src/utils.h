@@ -16,6 +16,7 @@
 #include <string.h>
 #include <stdarg.h>	/* va_list */
 #include <stdatomic.h>	/* atomic_init() */
+#include <stddef.h>	/* offsetof() */
 #include <assert.h>
 
 #include <kjson.h>
@@ -150,6 +151,19 @@ static inline size_t unref(struct ref_counted *ref)
 #define REF(ptr)	ref(&(ptr)->ref_counted)
 #define UNREF(ptr)	unref(&(ptr)->ref_counted)
 
+struct object {
+	REF_COUNTED;
+	void (*fini)(struct object *);
+};
+
+#define OBJECT			struct object object_base
+#define OBJ_OF(ptr)		&(ptr)->object_base
+#define OBJ_INIT(ptr,fini)	obj_init(OBJ_OF(ptr), fini)
+#define OBJ_REF(ptr)		obj_ref(OBJ_OF(ptr))
+#define OBJ_UNREF(ptr)		obj_unref(OBJ_OF(ptr))
+#define OBJ_TO(obj,type) \
+	(type *)((char *)(obj) - offsetof(type, object_base))
+
 /* logging */
 
 enum ksc_log_lvl {
@@ -170,7 +184,7 @@ bool ksc_log_lvl_parse(const char *lvl, enum ksc_log_lvl *res);
  * __attribute__((destructor)). We still need access to this log at that
  * point, so make it refcnted. */
 struct ksc_log {
-	REF_COUNTED;
+	OBJECT;
 	enum ksc_log_lvl max_lvl;
 	int fd;
 	struct ksc_log__context_lvl {
@@ -183,7 +197,8 @@ struct ksc_log {
 
 #define KSC_DEFAULT_LOG	(struct ksc_log){ {}, INT_MAX, STDERR_FILENO, NULL, 0 }
 
-void ksc_log_fini(struct ksc_log *log);
+/* use OBJ_INIT to initialize logs */
+void ksc_log_fini(struct object *log);
 
 struct ksc_log_context {
 	const char *desc;
@@ -217,5 +232,25 @@ void ksc_log(enum ksc_log_lvl level, const struct ksc_log *log,
 	        __VA_ARGS__)
 
 #define KSC_DEBUG(lvl, ...) KSC_DEBUGL(lvl,, __VA_ARGS__)
+
+
+static inline void obj_init(struct object *v, void (*fini)(struct object *))
+{
+	REF_INIT(v);
+	v->fini = fini;
+}
+
+static inline void obj_ref(struct object *v)
+{
+	KSC_DEBUG(INFO, "obj_ref(%p)\n", v);
+	REF(v);
+}
+
+static inline void obj_unref(struct object *v)
+{
+	KSC_DEBUG(INFO, "obj_unref(%p)\n", v);
+	if (!UNREF(v))
+		v->fini(v);
+}
 
 #endif

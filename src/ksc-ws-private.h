@@ -25,38 +25,6 @@
 #define RECEIPT             SIGNALSERVICE__ENVELOPE__TYPE__RECEIPT
 #define UNIDENTIFIED_SENDER SIGNALSERVICE__ENVELOPE__TYPE__UNIDENTIFIED_SENDER
 
-struct object {
-	REF_COUNTED;
-	void (*fini)(struct object *);
-};
-
-static inline void obj_init(struct object *v, void (*fini)(struct object *))
-{
-	REF_INIT(v);
-	v->fini = fini;
-}
-
-static inline void obj_ref(struct object *v)
-{
-	KSC_DEBUG(INFO, "obj_ref(%p)\n", v);
-	REF(v);
-}
-
-static inline void obj_unref(struct object *v)
-{
-	KSC_DEBUG(INFO, "obj_unref(%p)\n", v);
-	if (!UNREF(v))
-		v->fini(v);
-}
-
-#define OBJECT			struct object object_base
-#define OBJ_OF(ptr)		&(ptr)->object_base
-#define OBJ_INIT(ptr,fini)	obj_init(OBJ_OF(ptr), fini)
-#define OBJ_REF(ptr)		obj_ref(OBJ_OF(ptr))
-#define OBJ_UNREF(ptr)		obj_unref(OBJ_OF(ptr))
-#define OBJ_TO(obj,type) \
-	(type *)((char *)(obj) - offsetof(type, object_base))
-
 /* helper to automate .on_finish by calling OBJ_UNREF */
 static inline int obj_run_every(int timeout_ms, int repetitions,
                                 void (*on_timeout)(struct object *udata),

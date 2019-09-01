@@ -13,27 +13,33 @@ struct ksc_ffi_log {
 	struct ksc_log log;
 };
 
-struct ksc_ffi_log * ksc_ffi_log_create(int fd, const char *level)
+static void ffi_log_fini(struct object *o)
 {
-	struct ksc_ffi_log log = { { .fd = fd } };
-	if (!ksc_log_lvl_parse(level, &log.log.max_lvl))
-		return NULL;
-	REF_INIT(&log.log);
-	return ksc_memdup(&log, sizeof(log));
+	struct ksc_log *log = OBJ_TO(o, struct ksc_log);
+	struct ksc_ffi_log *ffi_log =
+		(struct ksc_ffi_log *)((char *)log - offsetof(struct ksc_ffi_log, log));
+	assert(ffi_log);
+	KSC_DEBUG(DEBUG, "ffi: log_fini with count %zu\n", ffi_log->log.object_base.ref_counted.cnt);
+	for (struct ksc_log__context_lvl *c = ffi_log->log.context_lvls; c;
+	     c = c->next)
+		free((char *)c->desc);
+	ksc_log_fini(OBJ_OF(&ffi_log->log));
+	ksc_free(log);
 }
 
-void ksc_ffi_log_destroy(struct ksc_ffi_log *log)
+void ksc_ffi_log_destroy(struct ksc_ffi_log *ffi_log)
 {
-	if (!log)
-		return;
-	KSC_DEBUG(DEBUG, "ffi: log-unref with count %zu\n", log->log.ref_counted.cnt);
-	if (!UNREF(&log->log)) {
-		for (struct ksc_log__context_lvl *c = log->log.context_lvls; c;
-		     c = c->next)
-			free((char *)c->desc);
-		ksc_log_fini(&log->log);
-		ksc_free(log);
-	}
+	KSC_DEBUG(DEBUG, "ffi: log_destroy with count %zu\n", ffi_log->log.object_base.ref_counted.cnt);
+	OBJ_UNREF(&ffi_log->log);
+}
+
+struct ksc_ffi_log * ksc_ffi_log_create(int fd, const char *level)
+{
+	struct ksc_ffi_log log = { { {}, .fd = fd } };
+	if (!ksc_log_lvl_parse(level, &log.log.max_lvl))
+		return NULL;
+	OBJ_INIT(&log.log, ffi_log_fini);
+	return ksc_memdup(&log, sizeof(log));
 }
 
 int ksc_ffi_log_restrict_context(struct ksc_ffi_log *log, const char *desc,
@@ -219,7 +225,7 @@ struct ksc_ffi * ksc_ffi_start(const char *json_store_path,
 	ffi->js = json_store_create(json_store_path, &log->log);
 	if (!ffi->js)
 		goto error;
-	ffi->log = log;
+	ffi->log = log; /* we'll use the reference js has on log */
 	struct ksc_ws *kws = ksc_ws_connect_service(ffi->js,
 		.on_receipt = ffi_on_receipt,
 		.on_content = ffi_on_content,

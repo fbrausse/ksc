@@ -265,8 +265,7 @@ static void json_store_destroy(struct json_store *js)
 	ksc_free(js->path);
 	close(js->fd); /* also releases lockf(3p) lock */
 	assert(!js->ref_counted.cnt);
-	if (!UNREF(js->log))
-		ksc_log_fini(js->log);
+	OBJ_UNREF(js->log);
 	ksc_free(js);
 }
 
@@ -311,7 +310,7 @@ struct json_store * json_store_create(const char *path, struct ksc_log *log)
 		LOGL(ERROR, log, "calloc: %s\n", strerror(errno));
 		goto fail;
 	}
-	REF(log);
+	OBJ_REF(log);
 	js->fd = fd;
 	js->log = log;
 	js->path = strdup(path);

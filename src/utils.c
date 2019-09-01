@@ -118,8 +118,9 @@ static const char *const lvls[] = {
 	[KSC_LOG_DEBUG] = "debug",
 };
 
-void ksc_log_fini(struct ksc_log *log)
+void ksc_log_fini(struct object *o)
 {
+	struct ksc_log *log = OBJ_TO(o, struct ksc_log);
 	KSC_LOG(DEBUG, log,, "log_fini %p\n", log);
 	for (struct ksc_log__context_lvl *it, *jt = log->context_lvls; (it = jt);) {
 		jt = it->next;

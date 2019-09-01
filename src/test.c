@@ -526,7 +526,7 @@ int main(int argc, char **argv)
 		.end_session = end_session,
 		.sync_request = sync_request,
 	};
-	REF_INIT(&ctx.log);
+	OBJ_INIT(&ctx.log, ksc_log_fini);
 	struct json_store *js = NULL;
 	js = json_store_create(cli_path, &ctx.log);
 	LOGL_(js ? KSC_LOG_DEBUG : KSC_LOG_ERROR, &ctx.log, "js: %p\n", (void *)js);
@@ -574,8 +574,7 @@ int main(int argc, char **argv)
 #endif
 	json_store_unref(js);
 
-	if (!UNREF(&ctx.log))
-		ksc_log_fini(&ctx.log);
+	OBJ_UNREF(&ctx.log);
 
 	return 0;
 }

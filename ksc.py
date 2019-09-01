@@ -31,7 +31,7 @@ class ksc_ffi:
 
 		for k, v in {
 			'log_create': (ksc_ffi_log_p, (c_int, c_char_p)),
-			'log_unref': (c_void_p, (ksc_ffi_log_p,)),
+			'log_destroy': (c_void_p, (ksc_ffi_log_p,)),
 			'log_restrict_context': (c_int, (ksc_ffi_log_p, c_char_p, c_char_p)),
 			'envelope_get_source': (c_char_p, (ksc_envelope_p,)),
 			'envelope_get_source_device_id': (c_int64, (ksc_envelope_p,)),
@@ -79,8 +79,8 @@ class ksc:
 	def _log_create(self, fd, level):
 		return self._ffi.log_create(fd, level.encode())
 
-	def _log_unref(self, log):
-		self._ffi.log_unref(log)
+	def _log_destroy(self, log):
+		self._ffi.log_destroy(log)
 
 	def _log_restrict_context(self, log, desc, level):
 		return self._ffi.log_restrict_context(log, desc.encode(),
@@ -108,7 +108,7 @@ class ksc:
 		                    server_cert_path.encode(),
 		                    on_close_do_reconnect, data)
 		if ffi_log is not None:
-			self._log_unref(ffi_log)
+			self._log_destroy(ffi_log)
 		return r
 
 	def stop(self, k):
