@@ -26,7 +26,7 @@ branch at the linked URL if not specified otherwise):
     ```
     Pass `OPENSSL_CFLAGS` and `OPENSSL_LDFLAGS` to override the default settings
     found by its `makefile` as required.
-  - kjson: https://github.com/fbrausse/kjson
+  - kjson-0.1.x: https://github.com/fbrausse/kjson
     ```
     make libkjson.a
     ```
@@ -37,6 +37,7 @@ branch at the linked URL if not specified otherwise):
     The path to the `protobuf` sub-directory is to be set in the `make` variable
     `SERVICE_PROTO_PATH` when building `ksc`.
   - libsignal-metadata-java: https://github.com/signalapp/libsignal-metadata-java
+    (commit `2b96d348c395f1f72acde67892f7328e008352a2`).
     The path to the `protobuf` sub-directory is to be set in the `make` variable
     `METADATA_PROTO_PATH` when building `ksc`.
 
